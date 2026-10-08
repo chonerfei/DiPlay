@@ -3248,8 +3248,13 @@ class DiPlayActivity : ComponentActivity() {
     private fun vehicleDataSwitchesOn() = BydOutputSettings.batteryToIphone(this) ||
         BydOutputSettings.wheelSpeedToIphone(this) || BydOutputSettings.videoWhileParked(this)
 
-    private fun hasPreciseLocation() =
-        checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    private fun hasPreciseLocation(): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        } else {
+            PackageManager.PERMISSION_GRANTED == packageManager.checkPermission(
+                Manifest.permission.ACCESS_FINE_LOCATION, packageName)
+        }
 
     // The cluster screen is described at connection time, so a running session reconnects over
     // its current link. The position choices need no call: getString(R.string.apply_and_reconnect) already does it.
@@ -4247,7 +4252,7 @@ class DiPlayActivity : ComponentActivity() {
             super.setText(styled, BufferType.SPANNABLE)
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
             setCompoundDrawablesRelativeWithIntrinsicBounds(null, null,
-                context.getDrawable(R.drawable.ic_dp_chevron)?.mutate()?.apply { setTint(ACCENT) }, null)
+                androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_dp_chevron)?.mutate()?.apply { setTint(ACCENT) }, null)
         }
     }
     // Remote and D-pad users need to see where they are; touch mode never shows it.

@@ -122,6 +122,25 @@ internal class AudioFocusCoordinator(
             AudioChannel.NAVIGATION -> return
         }
         currentListener = listenerFor(focusGeneration)
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            // KitKat: the legacy stream-based focus API only. AudioAttributes (API 21) and
+            // AudioFocusRequest (API 26) do not exist here.
+            @Suppress("DEPRECATION")
+            val streamType = when (primary.channel) {
+                AudioChannel.MEDIA -> AudioManager.STREAM_MUSIC
+                AudioChannel.PHONE -> AudioManager.STREAM_VOICE_CALL
+                AudioChannel.ASSISTANT -> AudioManager.STREAM_MUSIC
+                AudioChannel.NAVIGATION -> return
+            }
+            requestedChannel = primary.channel
+            @Suppress("DEPRECATION")
+            val result = manager?.requestAudioFocus(currentListener, streamType, gain)
+            if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) setMediaVolume(FULL_VOLUME)
+            val line = "Audio: focus requested(legacy) channel=${primary.channel} stream=$streamType gain=$gain granted=$result"
+            Log.i(TAG, line)
+            runCatching { report(line) }
+            return
+        }
         val next = AudioFocusRequest.Builder(gain)
             .setAudioAttributes(primary.attributes)
             .setOnAudioFocusChangeListener(currentListener, Handler(Looper.getMainLooper()))
@@ -200,7 +219,9 @@ class AndroidMediaSink(
     // Each downlink publishes its own reference; a mic must match that stream and sample rate.
     private val callEchoReferences = ConcurrentHashMap<AudioStreamId, EchoReference>()
     private val appContext = context?.applicationContext
-    private val audioManager = appContext?.getSystemService(AudioManager::class.java)
+    // getSystemService(Class) needs API 23; Android 4.4 uses the string form.
+    private val audioManager =
+        appContext?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     private val audioFocusCoordinator = AudioFocusCoordinator(
         appContext,
         audioFocusEnabled,
@@ -983,9 +1004,16 @@ private class VideoDecoder(
                 DetachOutcome.PARKED -> {
                     val consumer = parking ?: ParkingOutput(width, height).also { parking = it }
                     try {
-                        checkNotNull(decoder).setOutputSurface(consumer.surface)
-                        outputSurface = consumer.surface
-                        Log.i(TAG, "video decoder parked off screen")
+                        // MediaCodec.setOutputSurface needs API 23; older devices release instead.
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                            checkNotNull(decoder).setOutputSurface(consumer.surface)
+                            outputSurface = consumer.surface
+                            Log.i(TAG, "video decoder parked off screen")
+                        } else {
+                            outcome = DetachOutcome.RELEASED
+                            outputSurface = null
+                            releaseDecoder()
+                        }
                     } catch (error: Exception) {
                         Log.w(TAG, "video decoder could not park; releasing it", error)
                         outcome = DetachOutcome.RELEASED
@@ -1018,7 +1046,7 @@ private class VideoDecoder(
             return
         }
         val codec = decoder
-        if (codec != null) {
+        if (codec != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             try {
                 codec.setOutputSurface(surface)
                 Log.i(TAG, "video decoder output surface updated")
@@ -1132,7 +1160,8 @@ private class VideoDecoder(
                         stats.onPacingDelay(delay.nanos)
                         localNs + delay.nanos
                     } else 0L
-                    if (targetNs - now in 1..MAX_PACING_AHEAD_NS) {
+                    if (targetNs - now in 1..MAX_PACING_AHEAD_NS && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        // Timestamped render needs API 21; KitKat renders immediately.
                         codec.releaseOutputBuffer(index, targetNs)
                     } else {
                         if (shown && delay != null && !heldOverGap && !pauseHeld) stats.onLate()
@@ -1408,8 +1437,63 @@ private class AudioRenderer(
         }
     }
 
+    /**
+     * Android 4.4 (KitKat) audio path: the legacy AudioTrack constructor only — no AudioAttributes
+     * (API 21), no AudioTrack.Builder (API 23). Media routes through STREAM_MUSIC or a chosen stream.
+     */
+    @Suppress("DEPRECATION")
+    private fun createTrackLegacy() {
+        val encoding = AndroidAudioFormat.ENCODING_PCM_16BIT
+        val channelConfig = if (format.channels >= 2) AndroidAudioFormat.CHANNEL_OUT_STEREO
+        else AndroidAudioFormat.CHANNEL_OUT_MONO
+        val minBuffer = AudioTrack.getMinBufferSize(format.sampleRate, channelConfig, encoding)
+        if (minBuffer <= 0) {
+            Log.e(TAG, "AudioTrack buffer size unavailable rate=${format.sampleRate} channels=${format.channels}")
+            runCatching { report("Audio: track unavailable api=${Build.VERSION.SDK_INT} stage=$diagnosticStage " +
+                "audioType=${format.audioType} codec=${format.codec} rate=${format.sampleRate} " +
+                "channels=${format.channels} minBufferResult=$minBuffer") }
+            return
+        }
+        val selection = mappedSelection()
+        mappedChannel = selection.channel
+        val streamOverride = channelOverride(selection.channel)
+        val streamType = if (streamOverride in AudioManager.STREAM_SYSTEM..AudioManager.STREAM_ACCESSIBILITY) {
+            streamOverride
+        } else {
+            AudioManager.STREAM_MUSIC
+        }
+        val plan = MediaAudioBuffer.plan(selection.channel == AudioChannel.MEDIA,
+            format.sampleRate, format.channels, minBuffer, mediaBufferMillis)
+        bytesPerSecond = format.sampleRate * frameBytes
+        diagnosticStage = "track-build"
+        track = AudioTrack(
+            streamType, format.sampleRate, channelConfig, encoding,
+            plan.trackBufferBytes, AudioTrack.MODE_STREAM)
+        diagnosticStage = "track-capacity"
+        startThresholdBytes = MediaAudioBuffer.startBytesFor(plan.startBytes, plan.trackBufferBytes, PREBUFFER_WRITE_CHUNK_BYTES)
+        if (track?.state != AudioTrack.STATE_INITIALIZED) {
+            Log.e(TAG, "AudioTrack init failed state=${track?.state} streamType=$streamType")
+            runCatching { report("Audio: track init failed api=${Build.VERSION.SDK_INT} " +
+                "streamType=$streamType state=${track?.state}") }
+            return
+        }
+        report("Audio: ready(legacy) audioType=${format.audioType} codec=${format.codec} " +
+            "rate=${format.sampleRate} channels=${format.channels} streamType=$streamType " +
+            "bufferMs=${plan.trackBufferBytes * 1000L / bytesPerSecond} " +
+            "startMs=${startThresholdBytes * 1000L / bytesPerSecond}")
+        Log.i(TAG, "audio track prepared(legacy) type=${format.payloadType} audioType=${format.audioType} " +
+            "codec=${format.codec} rate=${format.sampleRate} channels=${format.channels} " +
+            "streamType=$streamType buffer=${plan.trackBufferBytes * 1000L / bytesPerSecond}ms " +
+            "start=${startThresholdBytes * 1000L / bytesPerSecond}")
+    }
+
     private fun createTrack() {
         diagnosticStage = "track-buffer-size"
+        // Android 4.x: no AudioAttributes (21), no AudioTrack.Builder (23), no bufferSizeInFrames (23).
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            createTrackLegacy()
+            return
+        }
         val encoding = AndroidAudioFormat.ENCODING_PCM_16BIT
         val channelMask = if (format.channels >= 2) AndroidAudioFormat.CHANNEL_OUT_STEREO
         else AndroidAudioFormat.CHANNEL_OUT_MONO
@@ -1785,7 +1869,12 @@ private class AudioRenderer(
             }
             val writeStarted = System.nanoTime()
             diagnosticStage = "track-write"
-            val count = track.write(data, offset + written, writeLength, AudioTrack.WRITE_BLOCKING)
+            // write(byte[], int, int, int mode) needs API 21; KitKat has only the blocking 3-arg form.
+            val count = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                track.write(data, offset + written, writeLength, AudioTrack.WRITE_BLOCKING)
+            } else {
+                track.write(data, offset + written, writeLength)
+            }
             maxWriteMs = maxOf(maxWriteMs, (System.nanoTime() - writeStarted) / 1_000_000L)
             if (count < 0) {
                 writeErrorsThisWindow++

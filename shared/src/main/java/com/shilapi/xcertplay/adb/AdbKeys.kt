@@ -32,7 +32,13 @@ object AdbKeys {
     /** Loads the key from app-private storage, or makes one on first use. */
     @Synchronized
     fun load(context: Context): KeyPair {
-        val dir = File(context.noBackupFilesDir, DIR)
+        // noBackupFilesDir() needs API 21; Android 4.4 falls back to filesDir.
+        val base = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+            context.noBackupFilesDir
+        } else {
+            context.filesDir
+        }
+        val dir = File(base, DIR)
         val privateFile = File(dir, PRIVATE)
         val publicFile = File(dir, PUBLIC)
         runCatching {

@@ -604,7 +604,7 @@ class CarPlayHostActivity : ComponentActivity() {
         )
         val reusedBackgroundSession = adoptBackgroundSession()
         microphoneAvailable =
-            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+            grantedCompat(Manifest.permission.RECORD_AUDIO)
         microphonePermissionResolved = microphoneAvailable
         if (reusedBackgroundSession) {
             updateDebugOverlays()
@@ -708,9 +708,16 @@ class CarPlayHostActivity : ComponentActivity() {
         )
     }
 
+    /** Context.checkSelfPermission needs API 23; Android 4.4 grants permissions at install time. */
+    private fun grantedCompat(permission: String): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
+        } else {
+            PackageManager.PERMISSION_GRANTED == packageManager.checkPermission(permission, packageName)
+        }
+
     private fun hasFineLocationPermission(): Boolean =
-        checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
-            PackageManager.PERMISSION_GRANTED
+        grantedCompat(Manifest.permission.ACCESS_FINE_LOCATION)
 
     private fun requestVpnConsent() {
         if (awaitingVpnConsent) return
@@ -727,7 +734,7 @@ class CarPlayHostActivity : ComponentActivity() {
 
     private fun requestWirelessPermissions() {
         val permissions = requiredWirelessPermissions()
-        if (permissions.all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }) {
+        if (permissions.all { grantedCompat(it) }) {
             wirelessPermissionsReady = true
             updateHotspotStatusBlock()
             maybeStartCarPlay()
@@ -740,9 +747,7 @@ class CarPlayHostActivity : ComponentActivity() {
     }
 
     private fun hasRequiredWirelessPermissions(): Boolean =
-        requiredWirelessPermissions().all {
-            checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
-        }
+        requiredWirelessPermissions().all { grantedCompat(it) }
 
     private fun requiredWirelessPermissions(): List<String> = when {
         wirelessHotspotMode == WirelessHotspotMode.EXISTING_WIFI ->
@@ -3368,7 +3373,14 @@ class CarPlayHostActivity : ComponentActivity() {
             CanvasSupport(false, "canvas_4k_limit", "Decoder capability check skipped: canvas exceeds enlargement limit")
         } else decoderCanvasSupport(display)
 
-    private fun decoderCanvasSupport(display: AirPlayDisplayConfig): CanvasSupport = try {
+    private fun decoderCanvasSupport(display: AirPlayDisplayConfig): CanvasSupport {
+        // MediaCodecList needs API 21; on older Android no enlargement is offered rather
+        // than risking a NoClassDefFoundError that the Exception catch cannot hold.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            return CanvasSupport(false, "capability_query_unsupported",
+                "Decoder capability query needs API 21; enlargement disabled")
+        }
+        return try {
         val mime = if (hevcEnabled) MediaFormat.MIMETYPE_VIDEO_HEVC else MediaFormat.MIMETYPE_VIDEO_AVC
         // Match MediaCodec.createDecoderByType's first suitable decoder; do not silently force
         // an enlarged stream through a software decoder on a slower head unit.
@@ -3402,6 +3414,7 @@ class CarPlayHostActivity : ComponentActivity() {
     } catch (error: Exception) {
         CanvasSupport(false, "capability_query_${error.javaClass.simpleName}",
             "Decoder capability query failed error=${error.javaClass.simpleName}")
+    }
     }
 
     private fun createAirPlayConfig(size: DisplaySize): AirPlayConfig {
@@ -4060,7 +4073,7 @@ class CarPlayHostActivity : ComponentActivity() {
         resetSidePanel() // a new session starts without the side panel
         updateClusterMapShown()
         CarPlayMediaKeys.attach(this, next)
-        if (airPlayConfig.videoInCar) CarPlayVideo.attach(this, next)
+        // Parked video-in-car (CarPlayVideo/ExoPlayer) is removed in the Android 4.4 port.
         val display = CarPlaySessionDisplay(
             airPlayConfig.main.widthPixels, airPlayConfig.main.heightPixels,
             displayRotation(), hideTopBar, hideBottomBar, effectiveSize.width, effectiveSize.height,

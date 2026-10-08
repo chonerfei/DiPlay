@@ -23,11 +23,7 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "xcertplay"
+// Nissan (Android 4.4) port: build only the wired-CarPlay app modules.
 include(":common")
 include(":mobile")
-include(":automotive")
 include(":shared")
-include(":maphost")
-project(":maphost").projectDir = file("samples/maphost")
-include(":home")
-project(":home").projectDir = file("samples/home")

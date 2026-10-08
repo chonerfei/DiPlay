@@ -217,8 +217,10 @@ object AudioStreamCodec {
         val isAacLc = (bits and (AAC_LC_44K_STEREO or AAC_LC_48K_STEREO)) != 0L
         val isOpus = (bits and OPUS_MONO) != 0L
         val pcm = PCM_FORMAT[bits]
+        // Android 4.4's stagefright has no Opus decoder (added in 5.0): prefer AAC-LC or PCM there.
+        val opusUsable = isOpus && android.os.Build.VERSION.SDK_INT >= 21
         return when {
-            isOpus -> AudioFormat(AudioCodecKind.OPUS, 48_000, 1, payloadType, audioType)
+            opusUsable && !isAacLc -> AudioFormat(AudioCodecKind.OPUS, 48_000, 1, payloadType, audioType)
             isAacLc -> AudioFormat(
                 AudioCodecKind.AAC_LC,
                 if ((bits and AAC_LC_48K_STEREO) != 0L) 48_000 else 44_100,

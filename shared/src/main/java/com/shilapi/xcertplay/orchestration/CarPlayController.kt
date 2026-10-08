@@ -178,7 +178,9 @@ class CarPlayController(
     private val appContext = context.applicationContext
     private val diagnosticAttempt = diagnosticAttempts.incrementAndGet()
     private val diagnosticRun = AtomicInteger()
-    private val usbManager: UsbManager? = context.getSystemService(UsbManager::class.java)
+    // getSystemService(Class) needs API 23; Android 4.4 uses the string form.
+    private val usbManager: UsbManager? =
+        context.getSystemService(Context.USB_SERVICE) as? UsbManager
     private val bluetoothAdapter =
         appContext.getSystemService(BluetoothManager::class.java)?.adapter
     private val iphoneHost by lazy {

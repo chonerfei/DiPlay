@@ -26,6 +26,8 @@ internal class DiLink51ClusterMonitor(context: Context, private val onState: (Cl
     private data class EventKey(val pkg: String?, val name: String?, val id: Int, val type: Int, val time: Long)
 
     fun start() {
+        // UsageStatsManager needs API 21; this BYD cluster feature is disabled on older Android.
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.LOLLIPOP) return
         executor.scheduleWithFixedDelay({ poll() }, 0, 500, TimeUnit.MILLISECONDS)
     }
 
@@ -79,7 +81,10 @@ internal class DiLink51ClusterMonitor(context: Context, private val onState: (Cl
     }
 
     companion object {
-        fun hasAccess(context: Context): Boolean = context.getSystemService(AppOpsManager::class.java)
-            .checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName) == AppOpsManager.MODE_ALLOWED
+        // getSystemService(Class) needs API 23; the string form works everywhere. The OPSTR
+        // constant is inlined at compile time, and checkOpNoThrow(String, ...) is API 19.
+        fun hasAccess(context: Context): Boolean = (
+            context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
+            )?.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, Process.myUid(), context.packageName) == AppOpsManager.MODE_ALLOWED
     }
 }

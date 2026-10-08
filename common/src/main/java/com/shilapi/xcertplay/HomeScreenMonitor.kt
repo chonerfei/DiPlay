@@ -75,6 +75,8 @@ internal class HomeScreenMonitor(context: Context, private val onChange: (Boolea
     private fun isHomePackage(pkg: String): Boolean = pkg in homePackages
 
     private fun poll() {
+        // UsageStatsManager needs API 21; the poller is never scheduled on older Android.
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.LOLLIPOP) return
         val now = System.currentTimeMillis()
         val events = runCatching { context.getSystemService(UsageStatsManager::class.java).queryEvents(since, now) }
             .getOrNull() ?: return

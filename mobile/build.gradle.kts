@@ -1,6 +1,5 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.compose)
 }
 
 // Optional local-only input. CI and ordinary source builds contain no accessory identity.
@@ -15,11 +14,14 @@ android {
 
     defaultConfig {
         applicationId = "com.shihab.diplay"
-        minSdk = 28
+        // Nissan P350 head unit: Android 4.4 (API 19), USB wired CarPlay only.
+        minSdk = 19
         targetSdk = 37
         versionCode = 33
-        versionName = "0.2.14"
+        versionName = "0.2.14-nissan-usb"
 
+        // Dalvik on Android 4.4 needs the legacy multidex support library.
+        multiDexEnabled = true
     }
 
 
@@ -54,23 +56,17 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
     buildFeatures {
-        compose = true
+        // Jetpack Compose removed: Android 4.4 cannot run Compose (requires API 21+).
     }
 }
 
 dependencies {
-    implementation(platform(libs.androidx.compose.bom))
     implementation(project(":common"))
     implementation(project(":shared"))
-    implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.app.projected)
-    implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
-    debugImplementation(libs.androidx.compose.ui.tooling)
+    // Legacy multidex for Dalvik (Android 4.4).
+    implementation("androidx.multidex:multidex:2.0.1")
 }
 
 // No implicit import. Only the two explicitly selected local runtime assets are allowed.

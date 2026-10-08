@@ -13,6 +13,7 @@ import android.media.AudioManager
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -169,6 +170,13 @@ internal object CarPlayMediaKeys {
 
     private fun start(context: Context) {
         val expectedController = controller ?: return
+        // MediaSession, MediaMetadata and PlaybackState need API 21, AudioFocusRequest API 26.
+        // Android 4.4 skips the Android-side media session; wheel keys still reach CarPlay
+        // through controller.sendMediaButton.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            Log.i(TAG, "media keys active (legacy api<21: no Android media session)")
+            return
+        }
         val owner = Any().also { focusOwner = it }
         focusEventRevision = 0L
         val audio = context.getSystemService(AudioManager::class.java)
@@ -266,12 +274,6 @@ internal object CarPlayMediaKeys {
     }
 
     private fun send(index: Int, source: String) {
-        // While the car's video player is on screen the wheel drives it: a CarPlay play/pause would
-        // make the iPhone end the video session.
-        if (CarPlayVideo.onMediaKey(index)) {
-            Log.i(TAG, "media key $source -> car video player $index")
-            return
-        }
         val sent = synchronized(this) { controller }?.sendMediaButton(index) ?: false
         Log.i(TAG, "media key $source -> CarPlay $index sent=$sent")
     }

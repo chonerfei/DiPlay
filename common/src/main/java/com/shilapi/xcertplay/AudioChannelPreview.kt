@@ -3,6 +3,7 @@ package com.shilapi.xcertplay
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -40,7 +41,8 @@ internal class AudioChannelPreview(private val onUnavailable: (Int) -> Unit) : C
                 )
                 check(minimum > 0) { "No PCM output buffer is available" }
                 val bufferBytes = maxOf(minimum, SAMPLE_RATE / 10 * 2)
-                val built = if (channel == 0) {
+                val built = if (channel == 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    // AudioAttributes/AudioTrack.Builder need API 21; KitKat uses the stream path below.
                     AudioTrack.Builder()
                         .setAudioAttributes(
                             AudioAttributes.Builder()
@@ -70,13 +72,19 @@ internal class AudioChannelPreview(private val onUnavailable: (Int) -> Unit) : C
                 check(built.state == AudioTrack.STATE_INITIALIZED) { "Audio output did not initialize" }
                 if (closed || generation.get() != request) return@submit
                 activeTrack.set(built)
-                built.setVolume(0.6f)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) built.setVolume(0.6f)
+                else @Suppress("DEPRECATION") built.setStereoVolume(0.6f, 0.6f)
                 built.play()
                 var written = 0
                 while (written < pcm.size && !closed && generation.get() == request) {
-                    val count = built.write(
-                        pcm, written, minOf(4096, pcm.size - written), AudioTrack.WRITE_BLOCKING,
-                    )
+                    // write(byte[], int, int, int mode) needs API 21; KitKat has the blocking 3-arg form.
+                    val count = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        built.write(
+                            pcm, written, minOf(4096, pcm.size - written), AudioTrack.WRITE_BLOCKING,
+                        )
+                    } else {
+                        built.write(pcm, written, minOf(4096, pcm.size - written))
+                    }
                     check(count > 0) { "Could not write preview tone" }
                     written += count
                 }

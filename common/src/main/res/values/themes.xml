@@ -1,14 +1,10 @@
 <resources>
-    <style name="Theme.Xcertplay" parent="android:Theme.Material.NoActionBar">
-        <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#A6C8FF</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:navigationBarColor">#0C111B</item>
-        <item name="android:statusBarColor">#0C111B</item>
+    <!-- Android 4.4 (API 19/20): Theme.Material does not exist yet, fall back to Holo. -->
+    <style name="Theme.Xcertplay" parent="android:Theme.Holo.NoActionBar">
         <item name="android:windowBackground">#0C111B</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
-    <style name="Theme.AdbCluster" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.AdbCluster" parent="android:Theme.Holo.NoActionBar">
         <item name="android:windowIsTranslucent">true</item>
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowNoTitle">true</item>
