@@ -23,6 +23,14 @@
             android:name="com.shilapi.xcertplay.BootReceiver"
             android:enabled="true"
             tools:replace="android:enabled" />
+
+        <!-- Field crash reporter: own process so the trace outlives the crashing one. -->
+        <activity
+            android:name="com.shilapi.xcertplay.CrashActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:process=":crash"
+            android:theme="@style/Theme.Xcertplay" />
     </application>
 
 </manifest>

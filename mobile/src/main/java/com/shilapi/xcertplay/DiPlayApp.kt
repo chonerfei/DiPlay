@@ -11,6 +11,8 @@ import androidx.multidex.MultiDex
 class DiPlayApp : Application() {
     override fun attachBaseContext(base: Context) {
         super.attachBaseContext(base)
+        // Installed before MultiDex so even a secondary-dex failure is captured and displayed.
+        CrashReporter.install(this)
         MultiDex.install(this)
     }
 }
