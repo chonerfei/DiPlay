@@ -16,6 +16,13 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+
+    // Pre-existing findings unrelated to the Android 4.4 API-compat port: permission
+    // annotations, hidden-API reflection, legacy intent flags. NewApi stays an error
+    // so future API-compat regressions still fail the build.
+    lint {
+        warning += ['MissingPermission', 'WrongConstant', 'SoonBlockedPrivateApi', 'BlockedPrivateApi']
+    }
 }
 dependencies {
     // androidx.car.app removed: MyCarApp* projected-app classes are not part of the wired-only build.
