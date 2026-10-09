@@ -45,6 +45,9 @@ object CarPlayRotation {
     ): Int? {
         val limit = picture.maxSide?.let { minOf(it, longSide) } ?: longSide
         val mime = if (hevc) MediaFormat.MIMETYPE_VIDEO_HEVC else MediaFormat.MIMETYPE_VIDEO_AVC
+        // MediaCodecList and codec capability probing need API 21; older devices take the
+        // square without probing, the same policy as the host activity's canvas check.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return limit and 1.inv()
         val decoders = runCatching {
             MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.filter { info ->
                 !info.isEncoder && info.supportedTypes.any { it.equals(mime, ignoreCase = true) }

@@ -1,7 +1,6 @@
 package com.shilapi.xcertplay.airplay
 
 import java.math.BigInteger
-import java.util.Base64
 
 /** Whether the latest video availability update was sent now or retained for a later AirPlay stage. */
 internal enum class VideoPlaybackDelivery { SENT, QUEUED, UNCHANGED }
@@ -110,7 +109,7 @@ object VideoInCar {
         var bits = BigInteger.valueOf(legacyFeatures)
         ADDITIONAL_FEATURE_BITS.forEach { bits = bits.setBit(it) }
         val littleEndian = bits.toByteArray().reversedArray().dropLastWhile { it == 0.toByte() }.toByteArray()
-        return Base64.getEncoder().encodeToString(littleEndian)
+        return android.util.Base64.encodeToString(littleEndian, android.util.Base64.NO_WRAP)
     }
 
     /**

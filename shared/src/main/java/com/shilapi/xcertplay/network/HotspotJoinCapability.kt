@@ -1,6 +1,7 @@
 package com.shilapi.xcertplay.network
 
 import android.os.Binder
+import android.os.Build
 import android.os.IBinder
 import android.os.IInterface
 import android.os.Parcel
@@ -32,6 +33,11 @@ internal object HotspotJoinCapability {
         })
     } catch (_: Exception) { null }
 
+    // Parcel.readTypedObject needs API 33; older releases read the null marker manually.
+    private fun readCapability(data: Parcel, creator: Parcelable.Creator<*>): Any? =
+        if (Build.VERSION.SDK_INT >= 33) data.readTypedObject(creator)
+        else if (data.readInt() != 0) creator.createFromParcel(data) else null
+
     /** Android sends the current SoftApCapability immediately on registration, even with AP off. */
     internal fun read(registration: Registration, timeoutMillis: Long = 2_000): Snapshot? {
         require(timeoutMillis in 1..2_000)
@@ -57,8 +63,9 @@ internal object HotspotJoinCapability {
                     if (transaction != code || !active.get()) return true
                     try {
                         data.enforceInterface(DESCRIPTOR)
-                        val capability = data.readTypedObject(creator) ?: return true
-                        data.enforceNoDataAvail()
+                        val capability = readCapability(data, creator) ?: return true
+                        // enforceNoDataAvail needs API 33; older parcels are read leniently.
+                        if (Build.VERSION.SDK_INT >= 33) data.enforceNoDataAvail()
                         val supported = capabilityType.getMethod("areFeaturesSupported", Long::class.javaPrimitiveType)
                             .invoke(capability, feature) == true
                         val channels = capabilityType.getMethod("getSupportedChannelList", Int::class.javaPrimitiveType)

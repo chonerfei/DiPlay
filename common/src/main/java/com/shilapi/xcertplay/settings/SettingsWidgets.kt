@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
+import android.os.Build
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -76,18 +77,23 @@ object SettingsWidgets {
             this.contentDescription = contentDescription
             isEnabled = enabled
             if (theme.isOverlay) {
-                showText = false
-                thumbTintList = ColorStateList(
-                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                    intArrayOf(theme.accent, theme.textSecondary),
-                )
-                trackTintList = ColorStateList(
-                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                    intArrayOf(theme.accentTrack, theme.trackOff),
-                )
+                // Switch text/tint setters need API 21/23; older Android keeps the default look.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    showText = false
+                    thumbTintList = ColorStateList(
+                        arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                        intArrayOf(theme.accent, theme.textSecondary),
+                    )
+                    trackTintList = ColorStateList(
+                        arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                        intArrayOf(theme.accentTrack, theme.trackOff),
+                    )
+                }
             } else {
                 minHeight = theme.dp(context, 56)
-                buttonTintList = ColorStateList.valueOf(theme.accent)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    buttonTintList = ColorStateList.valueOf(theme.accent)
+                }
             }
             setOnCheckedChangeListener { _, isChecked -> onChanged(isChecked) }
         }
@@ -126,14 +132,20 @@ object SettingsWidgets {
             // The whole row is the target; the switch stays out of the focus order so D-pad stops once.
             switch.isFocusable = false
             row.isFocusable = true
-            row.background = android.graphics.drawable.RippleDrawable(
-                ColorStateList.valueOf(ROW_RIPPLE), null, android.graphics.drawable.ColorDrawable(Color.WHITE))
-            row.foreground = android.graphics.drawable.StateListDrawable().apply {
-                addState(intArrayOf(android.R.attr.state_focused), android.graphics.drawable.GradientDrawable().apply {
-                    setColor(Color.TRANSPARENT)
-                    cornerRadius = theme.dp(context, 12).toFloat()
-                    setStroke(theme.dp(context, 3), theme.accent)
-                })
+            // RippleDrawable needs API 21 and View.setForeground API 23; older Android keeps
+            // the plain row background and loses only the focus highlight.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                row.background = android.graphics.drawable.RippleDrawable(
+                    ColorStateList.valueOf(ROW_RIPPLE), null, android.graphics.drawable.ColorDrawable(Color.WHITE))
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                row.foreground = android.graphics.drawable.StateListDrawable().apply {
+                    addState(intArrayOf(android.R.attr.state_focused), android.graphics.drawable.GradientDrawable().apply {
+                        setColor(Color.TRANSPARENT)
+                        cornerRadius = theme.dp(context, 12).toFloat()
+                        setStroke(theme.dp(context, 3), theme.accent)
+                    })
+                }
             }
             row.setOnClickListener { if (switch.isEnabled) switch.toggle() }
             switch.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
@@ -205,10 +217,12 @@ object SettingsWidgets {
                 this.text = text
                 textSize = 17f
                 setTextColor(theme.textSecondary)
-                buttonTintList = ColorStateList(
-                    arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
-                    intArrayOf(theme.accent, theme.textSecondary),
-                )
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    buttonTintList = ColorStateList(
+                        arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                        intArrayOf(theme.accent, theme.textSecondary),
+                    )
+                }
                 tag = value
                 isChecked = value == selected
             }
@@ -288,9 +302,12 @@ object SettingsWidgets {
         val seekBar = SeekBar(context).apply {
             max = CarPlayDisplayScale.MAX_PERCENT - CarPlayDisplayScale.MIN_PERCENT
             progress = initial - CarPlayDisplayScale.MIN_PERCENT
-            splitTrack = false
-            progressTintList = ColorStateList.valueOf(theme.accent)
-            thumbTintList = ColorStateList.valueOf(theme.accent)
+            // Split-track and tint setters need API 21; the default seek bar look stands on KitKat.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                splitTrack = false
+                progressTintList = ColorStateList.valueOf(theme.accent)
+                thumbTintList = ColorStateList.valueOf(theme.accent)
+            }
             setOnSeekBarChangeListener(
                 object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {

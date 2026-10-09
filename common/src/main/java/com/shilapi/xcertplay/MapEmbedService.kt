@@ -56,12 +56,17 @@ class MapEmbedService : Service() {
         destroyed = true
         stopObservingSharing?.invoke()
         stopObservingSharing = null
-        embeds.values.toList().forEach { it.release() }
+        // Embeds only exist on API 30+ (SurfaceControlViewHost); older Android holds none.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            embeds.values.toList().forEach { it.release() }
+        }
         embeds.clear()
         super.onDestroy()
     }
 
     private fun revokeSharing() {
+        // The embed feature needs API 30; nothing to revoke on older Android.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
         if (destroyed) return
         val attached = embeds.values.toList()
         embeds.clear()
@@ -69,6 +74,8 @@ class MapEmbedService : Service() {
     }
 
     private fun handle(message: Message) {
+        // The embed feature needs API 30; messages are ignored on older Android.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
         val client = message.replyTo ?: return
         val caller = packageManager.getNameForUid(message.sendingUid) ?: "uid ${message.sendingUid}"
         when (message.what) {
@@ -120,7 +127,9 @@ class MapEmbedService : Service() {
         try {
             client.send(Message.obtain(null, what).apply { this.data = data })
         } catch (_: RemoteException) {
-            embeds.remove(client.binder)?.release()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                embeds.remove(client.binder)?.release()
+            }
         }
     }
 

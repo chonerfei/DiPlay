@@ -14,7 +14,6 @@ import java.security.Signature
 import java.security.interfaces.RSAPublicKey
 import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.X509EncodedKeySpec
-import java.util.Base64
 
 /** DiPlay's own ADB key: adbd remembers it after the driver approves it once. */
 object AdbKeys {
@@ -81,7 +80,7 @@ object AdbKeys {
             put(littleEndian(rr, KEY_BITS / 8))
             putInt(rsa.publicExponent.toInt())
         }.array()
-        return (Base64.getEncoder().encodeToString(blob) + NAME + "\u0000").toByteArray(Charsets.UTF_8)
+        return (android.util.Base64.encodeToString(blob, android.util.Base64.NO_WRAP) + NAME + "\u0000").toByteArray(Charsets.UTF_8)
     }
 
     private fun littleEndian(value: BigInteger, size: Int): ByteArray {

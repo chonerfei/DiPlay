@@ -410,7 +410,7 @@ object BydCarPlayCallTool {
             else -> throw IllegalArgumentException("unknown phase $phase")
         }
         val name = encodedName?.takeIf { it != "-" }
-            ?.let { String(java.util.Base64.getDecoder().decode(it), Charsets.UTF_8) }.orEmpty()
+            ?.let { String(android.util.Base64.decode(it, android.util.Base64.DEFAULT), Charsets.UTF_8) }.orEmpty()
         // No AUDIO_CARPLAY_CALL_STATUS in-call write: it switches the amplifier to the stock CarPlay call
         // channel, while BYD's AudioService reclassifies DiPlay's voice stream as music, so callers go silent.
         val writes = listOf(
@@ -472,19 +472,37 @@ object BydCarPlayCallTool {
     }
 
     private fun alive(processId: String): Boolean = runCatching {
-        android.system.Os.kill(processId.toInt(), 0)
+        // Os.kill needs API 21; KitKat only offers the legacy Process signal probe.
+        if (android.os.Build.VERSION.SDK_INT >= 21) {
+            android.system.Os.kill(processId.toInt(), 0)
+        } else {
+            android.os.Process.sendSignal(processId.toInt(), 0)
+        }
         true
     }.getOrDefault(false)
 
-    private fun appMayBeAlive(processId: String): Boolean = try {
-        android.system.Os.kill(processId.toInt(), 0)
-        true
-    } catch (error: android.system.ErrnoException) {
-        // Shell may lack permission to signal the app UID. Only ESRCH establishes death;
-        // EPERM and other errors must not authorize stealing even a pristine reservation.
-        error.errno != android.system.OsConstants.ESRCH
-    } catch (_: Throwable) {
-        true
+    private fun appMayBeAlive(processId: String): Boolean {
+        val pid = processId.toInt()
+        // Os.kill needs API 21; on KitKat the legacy signal probe cannot report a dead
+        // process, so it must never authorize stealing a reservation.
+        if (android.os.Build.VERSION.SDK_INT < 21) {
+            return try {
+                android.os.Process.sendSignal(pid, 0)
+                true
+            } catch (_: Throwable) {
+                true
+            }
+        }
+        return try {
+            android.system.Os.kill(pid, 0)
+            true
+        } catch (error: android.system.ErrnoException) {
+            // Shell may lack permission to signal the app UID. Only ESRCH establishes death;
+            // EPERM and other errors must not authorize stealing even a pristine reservation.
+            error.errno != android.system.OsConstants.ESRCH
+        } catch (_: Throwable) {
+            true
+        }
     }
 
     private fun running(packageName: String, processId: String): Boolean = runCatching {

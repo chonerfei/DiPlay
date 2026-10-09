@@ -6,6 +6,7 @@ import android.app.AlertDialog
 import android.content.Context
 import android.content.res.Configuration
 import android.content.res.Resources
+import android.os.Build
 import android.util.DisplayMetrics
 import android.view.ContextThemeWrapper
 import com.shilapi.xcertplay.host.R
@@ -51,8 +52,22 @@ object InterfaceSize {
             screenWidthDp = (base.screenWidthDp / scale).roundToInt()
             screenHeightDp = (base.screenHeightDp / scale).roundToInt()
             smallestScreenWidthDp = (base.smallestScreenWidthDp / scale).roundToInt()
-            setLocales(base.locales)
-            setLayoutDirection(base.locales[0])
+            copyLocalesFrom(base)
+        }
+    }
+
+    // LocaleList-based Configuration APIs need API 24; KitKat carries a single Locale field.
+    @Suppress("DEPRECATION")
+    private fun Configuration.copyLocalesFrom(source: Configuration) {
+        if (Build.VERSION.SDK_INT >= 24) {
+            setLocales(source.locales)
+            setLayoutDirection(source.locales[0])
+        } else {
+            val locale = source.locale
+            if (locale != null) {
+                setLocale(locale)
+                setLayoutDirection(locale)
+            }
         }
     }
 
@@ -63,8 +78,7 @@ object InterfaceSize {
      */
     internal fun contextOverride(scaled: Configuration): Configuration = Configuration().apply {
         densityDpi = scaled.densityDpi
-        setLocales(scaled.locales)
-        setLayoutDirection(scaled.locales[0])
+        copyLocalesFrom(scaled)
     }
 
     /** Applies the density override for [base] to [activity]; call from attachBaseContext. */

@@ -25,9 +25,11 @@ class ExistingWifiManager(
     private val onDiagnostic: (String) -> Unit = {},
     private val onNetworkChanged: () -> Unit = {},
 ) : WirelessHotspotManager {
-    private val connectivity = context.applicationContext.getSystemService(ConnectivityManager::class.java)
+    private val connectivity = context.applicationContext
+        .getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
         ?: throw IllegalStateException("ConnectivityManager is unavailable")
-    private val wifi = context.applicationContext.getSystemService(WifiManager::class.java)
+    private val wifi = context.applicationContext
+        .getSystemService(Context.WIFI_SERVICE) as? WifiManager
         ?: throw IllegalStateException("WifiManager is unavailable")
     private val lock = Any()
     private val invalidated = AtomicBoolean()
@@ -39,15 +41,8 @@ class ExistingWifiManager(
     @Volatile private var interfaceName: String? = null
     private var callbackRegistered = false
 
-    private val callback = object : ConnectivityManager.NetworkCallback() {
-        override fun onLost(network: Network) {
-            if (network == selected) invalidate("network lost")
-        }
-
-        override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) {
-            if (network == selected && !sameLink(properties)) invalidate("interface or address changed")
-        }
-    }
+    // NetworkCallback needs API 21; created during start(), which rejects older releases.
+    @Volatile private var callback: ConnectivityManager.NetworkCallback? = null
 
     init {
         require(ManualHotspotValidation.error(ssid, passphrase) == null) {
@@ -56,6 +51,10 @@ class ExistingWifiManager(
     }
 
     override fun start(timeoutMillis: Long): WirelessHotspotInfo {
+        // NetworkCallback, allNetworks and getNetworkCapabilities need API 21.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            throw IOException("Existing Wi-Fi attachment needs Android 5.0 or newer")
+        }
         check(Looper.myLooper() != Looper.getMainLooper()) {
             "ExistingWifiManager.start must not run on the main thread"
         }
@@ -115,9 +114,22 @@ class ExistingWifiManager(
                     hosts = addresses
                     interfaceIndex = iface.index
                     interfaceName = name
-                    connectivity.registerNetworkCallback(NetworkRequest.Builder().clearCapabilities()
+                    val networkCallback = object : ConnectivityManager.NetworkCallback() {
+                        override fun onLost(network: Network) {
+                            if (network == selected) invalidate("network lost")
+                        }
+
+                        override fun onLinkPropertiesChanged(network: Network, properties: LinkProperties) {
+                            if (network == selected && !sameLink(properties)) invalidate("interface or address changed")
+                        }
+                    }
+                    callback = networkCallback
+                    val request = NetworkRequest.Builder()
                         .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-                        .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(), callback)
+                        .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                    // clearCapabilities needs API 30; older releases keep the default capabilities.
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) request.clearCapabilities()
+                    connectivity.registerNetworkCallback(request.build(), networkCallback)
                     callbackRegistered = true
                 }
                 // Close the gap between reading the link and registering the callback.
@@ -145,9 +157,12 @@ class ExistingWifiManager(
         throw IOException("Existing Wi-Fi attachment was cancelled")
     }
 
-    private fun sameLink(properties: LinkProperties): Boolean =
-        properties.interfaceName == interfaceName && properties.linkAddresses.any { it.address == host } &&
+    private fun sameLink(properties: LinkProperties): Boolean {
+        // LinkProperties getters need API 21; callers only run on Android 5.0+.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return false
+        return properties.interfaceName == interfaceName && properties.linkAddresses.any { it.address == host } &&
             existingWifiHostAddresses(properties.linkAddresses.map { it.address }, interfaceIndex).toSet() == hosts.toSet()
+    }
 
     private fun security(): Iap2WirelessSecurity =
         if (passphrase.isEmpty()) Iap2WirelessSecurity.NONE else Iap2WirelessSecurity.WPA_WPA2
@@ -177,9 +192,13 @@ class ExistingWifiManager(
         synchronized(lock) {
             closed = true
             if (callbackRegistered) {
-                connectivity.unregisterNetworkCallback(callback)
+                // unregisterNetworkCallback needs API 21; no callback can exist below it.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    callback?.let { connectivity.unregisterNetworkCallback(it) }
+                }
                 callbackRegistered = false
             }
+            callback = null
         }
     }
 }

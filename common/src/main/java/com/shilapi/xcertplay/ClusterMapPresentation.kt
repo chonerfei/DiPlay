@@ -193,7 +193,7 @@ internal class ClusterMapPresentation(
 
         /** Keep the 5/5.1 selection order, then try the measured DiLink 4 projection display. */
         fun findDisplay(context: Context, theme: DiLink51ClusterLayout.Theme = DiLink51ClusterLayout.theme(context)): Display? {
-            val displays = context.getSystemService(DisplayManager::class.java)
+            val displays = (context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)
                 ?.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION) ?: return null
             val name = DiLink51ClusterLayout.displayName(
                 displays.map { it.name }, android.os.Build.FINGERPRINT, theme,
@@ -215,7 +215,7 @@ internal class ClusterMapPresentation(
         }
 
         fun describeDisplays(context: Context): String =
-            context.getSystemService(DisplayManager::class.java)?.displays
+            (context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)?.displays
                 ?.joinToString {
                     val size = sizeOf(it)
                     "${it.displayId}:${it.name} ${size.x}x${size.y} flags=${it.flags} valid=${it.isValid}"
@@ -225,7 +225,7 @@ internal class ClusterMapPresentation(
             appendLine("clusterEnabled=${AirPlayPersistence.loadClusterMapEnabled(context)}")
             appendLine("navigationReceiverAvailable=${com.shilapi.xcertplay.hud.BydOutputSettings.navigationAvailable(context)}")
             appendLine("allDisplays=${describeDisplays(context)}")
-            val presentations = context.getSystemService(DisplayManager::class.java)
+            val presentations = (context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)
                 ?.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION).orEmpty()
             appendLine("presentationDisplayIds=${presentations.joinToString { it.displayId.toString() }}")
             val selected = findDisplay(context)

@@ -19,6 +19,8 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
+import androidx.annotation.RequiresApi
+import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
 import com.shilapi.xcertplay.airplay.CarPlayMediaButton
 import com.shilapi.xcertplay.host.R
@@ -56,6 +58,7 @@ internal object CarPlayMediaKeys {
     private var controller: CarPlayController? = null
     private var session: MediaSession? = null
     private var focusRequest: AudioFocusRequest? = null
+    private var focusListener: AudioManager.OnAudioFocusChangeListener? = null
     private var focusOwner: Any? = null
     private var focusEventRevision = 0L
     private var focusHeld = false
@@ -121,7 +124,7 @@ internal object CarPlayMediaKeys {
                 // Republishing the metadata each time sent a copy of the artwork through system_server
                 // to every media listener, and on a DiLink 5.0 Tang that exhausted memory within
                 // minutes. The position goes in the playback state.
-                if (metadataChanged) session?.setMetadata(androidMetadata(update, shownArtworkLocked()))
+                if (metadataChanged) publishMetadataLocked(update, shownArtworkLocked())
                 publishPlaybackStateLocked()
             }
         }
@@ -144,7 +147,7 @@ internal object CarPlayMediaKeys {
         while (artworkCache.size > MAX_CACHED_ARTWORK) artworkCache.remove(artworkCache.keys.first())
         if (nowPlaying.artworkTransferId == id) {
             artwork = decoded
-            session?.setMetadata(androidMetadata(nowPlaying, shownArtworkLocked()))
+            publishMetadataLocked(nowPlaying, shownArtworkLocked())
         }
     }
 
@@ -152,10 +155,18 @@ internal object CarPlayMediaKeys {
     // keys. When CarPlay starts playing again it becomes the car's media source again, as any player
     // would; only the start counts, so a car source picked while the iPhone plays on is not undone.
     private fun regainFocusLocked() {
-        val request = focusRequest ?: return
         if (focusHeld) return
-        val audio = appContext?.getSystemService(AudioManager::class.java) ?: return
-        focusHeld = audio.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        val audio = appContext?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        focusHeld = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val request = focusRequest ?: return
+            audio.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        } else {
+            // API 21-25 hold focus through the deprecated call; repeat it to regain.
+            val listener = focusListener ?: return
+            @Suppress("DEPRECATION")
+            val granted = audio.requestAudioFocus(listener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
+            granted == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        }
         if (focusHeld) forwardGrantedFocusLocked()
         Log.i(TAG, "audio focus regained=$focusHeld")
     }
@@ -166,6 +177,12 @@ internal object CarPlayMediaKeys {
         mediaAudioActive = active
         if (active && session == null) start(context) else if (active) regainFocusLocked()
         publishPlaybackStateLocked()
+    }
+
+    // The whole Android-side media session needs API 21; on KitKat there is none and metadata is skipped.
+    private fun publishMetadataLocked(info: CarPlayNowPlaying, shownArtwork: Bitmap?) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return
+        session?.setMetadata(androidMetadata(info, shownArtwork))
     }
 
     private fun start(context: Context) {
@@ -179,24 +196,34 @@ internal object CarPlayMediaKeys {
         }
         val owner = Any().also { focusOwner = it }
         focusEventRevision = 0L
-        val audio = context.getSystemService(AudioManager::class.java)
-        val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
-            .setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                    .build(),
-            )
-            .setOnAudioFocusChangeListener({ change ->
-                onFocusChanged(expectedController, owner, change)
-            }, mainHandler)
-            .build()
-        val granted = audio?.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
-        focusRequest = request
+        val audio = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        val listener = AudioManager.OnAudioFocusChangeListener { change ->
+            onFocusChanged(expectedController, owner, change)
+        }
+        focusListener = listener
+        val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build(),
+                )
+                .setOnAudioFocusChangeListener(listener, mainHandler)
+                .build()
+            focusRequest = request
+            audio?.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        } else {
+            // API 21-25 only offer the deprecated focus call.
+            @Suppress("DEPRECATION")
+            val legacy = audio?.requestAudioFocus(listener, AudioManager.STREAM_MUSIC, AudioManager.AUDIOFOCUS_GAIN)
+            legacy == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        }
         focusHeld = granted
         if (granted) forwardGrantedFocusLocked()
+        val mediaCallback = callback
         session = MediaSession(context, "DiPlay CarPlay").apply {
-            setCallback(callback, mainHandler)
+            if (mediaCallback != null) setCallback(mediaCallback, mainHandler)
             setMetadata(androidMetadata(nowPlaying, shownArtworkLocked()))
             isActive = true
         }
@@ -238,21 +265,35 @@ internal object CarPlayMediaKeys {
         focusOwner = null
         artworkOwner = null
         artworkQueue.clear()
-        session?.let {
-            it.isActive = false
-            it.release()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            session?.let {
+                it.isActive = false
+                it.release()
+            }
         }
         session = null
         mediaAudioActive = false
         nowPlaying = CarPlayNowPlaying()
         artwork = null
         artworkCache.clear()
-        focusRequest?.let { request -> appContext?.getSystemService(AudioManager::class.java)?.abandonAudioFocusRequest(request) }
+        val audio = appContext?.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val request = focusRequest
+            if (audio != null && request != null) audio.abandonAudioFocusRequest(request)
+        } else {
+            val listener = focusListener
+            if (audio != null && listener != null) {
+                @Suppress("DEPRECATION")
+                audio.abandonAudioFocus(listener)
+            }
+        }
         focusRequest = null
+        focusListener = null
         focusHeld = false
     }
 
     private fun publishPlaybackStateLocked() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return
         val playing = if (nowPlaying.elapsedMillis != null || nowPlaying.title != null) {
             nowPlaying.playing
         } else {
@@ -278,17 +319,24 @@ internal object CarPlayMediaKeys {
         Log.i(TAG, "media key $source -> CarPlay $index sent=$sent")
     }
 
-    private val callback = CarPlayMediaCallback(
-        experimentalDiLink3Keys = { appContext?.let(BydOutputSettings::carPlayCallControls) == true },
-        send = ::send,
-    )
+    // Built lazily: the type loads MediaSession.Callback, which does not exist before API 21.
+    private val callback: CarPlayMediaCallback? by lazy {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) CarPlayMediaCallback(
+            experimentalDiLink3Keys = { appContext?.let(BydOutputSettings::carPlayCallControls) == true },
+            send = ::send,
+        ) else null
+    }
 
     /** Whether [next] changes what the media session's metadata shows; position and play state do not. */
     internal fun metadataChanged(previous: CarPlayNowPlaying, next: CarPlayNowPlaying): Boolean =
         previous.copy(elapsedMillis = null, playing = false) != next.copy(elapsedMillis = null, playing = false)
 
-    internal fun androidMetadata(info: CarPlayNowPlaying, artwork: Bitmap? = null): MediaMetadata =
-        MediaMetadata.Builder().apply {
+    internal fun androidMetadata(info: CarPlayNowPlaying, artwork: Bitmap? = null): MediaMetadata {
+        // MediaMetadata needs API 21; every call site runs inside the guarded media session path.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            throw IllegalStateException("MediaMetadata needs Android 5.0 or newer")
+        }
+        return MediaMetadata.Builder().apply {
             info.title?.let {
                 putString(MediaMetadata.METADATA_KEY_TITLE, it)
                 putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE, it)
@@ -305,13 +353,14 @@ internal object CarPlayMediaKeys {
                 putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, it)
             }
         }.build()
+    }
 
     // Without art the car draws DiPlay's bright launcher icon instead.
     private fun shownArtworkLocked(): Bitmap? =
         artwork ?: placeholder ?: appContext?.let(::placeholderArt)?.also { placeholder = it }
 
-    internal fun placeholderArt(context: Context): Bitmap? = context
-        .getDrawable(R.drawable.art_now_playing_placeholder)
+    internal fun placeholderArt(context: Context): Bitmap? = ContextCompat
+        .getDrawable(context, R.drawable.art_now_playing_placeholder)
         ?.toBitmap(MAX_ARTWORK_DIMENSION, MAX_ARTWORK_DIMENSION)
 
     /**
@@ -374,6 +423,7 @@ internal object CarPlayMediaKeys {
  * Media-session input → CarPlay presses. Hardware keys arrive as button events and keep the toggle;
  * media controllers (not hardware keys) call [onPlay] and [onPause] with an explicit intent.
  */
+@RequiresApi(Build.VERSION_CODES.LOLLIPOP)
 internal class CarPlayMediaCallback(
     private val experimentalDiLink3Keys: () -> Boolean = { false },
     private val send: (index: Int, source: String) -> Unit,

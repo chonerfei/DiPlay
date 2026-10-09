@@ -27,6 +27,8 @@ internal class AudioChannelPreview(private val onUnavailable: (Int) -> Unit) : C
 
     fun play(channel: Int, navigation: Boolean) {
         if (closed) return
+        // AudioTrack.Builder and the 4-arg write need API 23; skip the preview on older Android.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
         require(channel in AirPlayPersistence.AUDIO_CHANNELS)
         val request = generation.incrementAndGet()
         pending?.cancel(true)

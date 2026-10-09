@@ -39,7 +39,7 @@ class ManualHotspotManager(
     private val waitLock = Object()
     private var confirmed: HotspotSelection? = null
     private var lastSampleLog = emptyList<String>()
-    private val wifiManager = appContext.getSystemService(WifiManager::class.java)
+    private val wifiManager = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         ?: throw IllegalStateException("WifiManager is unavailable")
     private val expectedSsid = ssid
     private val passphrase = passphrase
@@ -229,7 +229,9 @@ class ManualHotspotManager(
             null
         } ?: return null
         if (unquote(connectionInfo.ssid) != expectedSsid) return null
-        return connectionInfo.frequency.takeIf { it > 0 }
+        // WifiInfo.getFrequency is API 21; platforms below it simply have no reading.
+        val frequency = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) connectionInfo.frequency else 0
+        return frequency.takeIf { it > 0 }
     }
 
     private fun frequencyFromScanResult(localInterface: LocalHotspotInterface): Int? {

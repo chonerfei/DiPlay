@@ -7,6 +7,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.Drawable
+import android.os.Build
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -221,7 +222,10 @@ internal class ClusterTurnCardView(context: Context) : View(context) {
         if (next.icon == 0) return
         val resId = glyphRes(next.icon)
         if (resId != glyphTag) {
-            glyph = ContextCompat.getDrawable(context, resId)?.mutate()?.apply { setTint(accent) }
+            glyph = ContextCompat.getDrawable(context, resId)?.mutate()?.apply {
+                // Drawable.setTint needs API 21; the glyph keeps its base color on older Android.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) setTint(accent)
+            }
             glyphTag = resId
         }
         val inset = side * 0.10f

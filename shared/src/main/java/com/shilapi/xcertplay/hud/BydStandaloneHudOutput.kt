@@ -51,9 +51,14 @@ internal class BydStandaloneHudOutput private constructor(context: Context) {
             runCatching {
                 val info = context.packageManager.getPackageInfo(TARGET.packageName, PackageManager.GET_SIGNING_CERTIFICATES)
                 val receiver = context.packageManager.getReceiverInfo(TARGET, 0)
-                appendLine("receiver=${TARGET.flattenToString()} version=${info.longVersionCode} system=${(info.applicationInfo?.flags?.and(ApplicationInfo.FLAG_SYSTEM) ?: 0) != 0}")
+                // longVersionCode and signingInfo need API 28; KitKat falls back to the legacy fields.
+                val version = if (Build.VERSION.SDK_INT >= 28) info.longVersionCode
+                else @Suppress("DEPRECATION") info.versionCode.toLong()
+                appendLine("receiver=${TARGET.flattenToString()} version=$version system=${(info.applicationInfo?.flags?.and(ApplicationInfo.FLAG_SYSTEM) ?: 0) != 0}")
                 appendLine("receiverEnabled=${receiver.enabled} exported=${receiver.exported} permission=${receiver.permission}")
-                info.signingInfo?.apkContentsSigners?.forEach { signer ->
+                val signers = if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners
+                else @Suppress("DEPRECATION") info.signatures
+                signers?.forEach { signer ->
                     appendLine("signerSha256=" + MessageDigest.getInstance("SHA-256").digest(signer.toByteArray())
                         .joinToString("") { "%02x".format(it.toInt() and 255) })
                 }

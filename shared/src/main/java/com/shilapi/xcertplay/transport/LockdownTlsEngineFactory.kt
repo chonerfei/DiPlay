@@ -1,6 +1,8 @@
 package com.shilapi.xcertplay.transport
 
 import android.annotation.SuppressLint
+import android.os.Build
+import android.util.Base64
 import java.io.ByteArrayInputStream
 import java.nio.charset.StandardCharsets
 import java.security.GeneralSecurityException
@@ -9,7 +11,6 @@ import java.security.KeyStore
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 import java.security.spec.PKCS8EncodedKeySpec
-import java.util.Base64
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLEngine
@@ -48,7 +49,11 @@ object LockdownTlsEngineFactory {
             }
             return context.createSSLEngine(PEER_HOST, PEER_PORT).apply {
                 useClientMode = true
-                sslParameters = sslParameters.apply { endpointIdentificationAlgorithm = null }
+                // Endpoint identification arrived in API 24 and already defaults to null
+                // below it, so disabling it explicitly is only needed (and possible) there.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    sslParameters = sslParameters.apply { endpointIdentificationAlgorithm = null }
+                }
             }
         } finally {
             password.fill('\u0000')
@@ -63,12 +68,20 @@ object LockdownTlsEngineFactory {
         val end = pem.indexOf(END_PRIVATE_KEY, begin + BEGIN_PRIVATE_KEY.size)
         if (begin < 0 || end < 0) throw GeneralSecurityException("Invalid PKCS#8 private key PEM")
         val encoded = pem.copyOfRange(begin + BEGIN_PRIVATE_KEY.size, end)
+        // java.util.Base64 needs API 26; dropping the MIME noise first lets
+        // android.util.Base64 decode the same PEM body bytes.
+        val cleaned = encoded.filter { byte ->
+            val character = byte.toInt().toChar()
+            character.isWhitespace() || character in 'A'..'Z' || character in 'a'..'z' ||
+                character in '0'..'9' || character == '+' || character == '/' || character == '='
+        }.toByteArray()
         return try {
-            Base64.getMimeDecoder().decode(encoded)
+            Base64.decode(cleaned, Base64.DEFAULT)
         } catch (error: IllegalArgumentException) {
             throw GeneralSecurityException("Invalid PKCS#8 private key PEM", error)
         } finally {
             encoded.fill(0)
+            cleaned.fill(0)
         }
     }
 

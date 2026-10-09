@@ -96,9 +96,11 @@ object AppLocale {
     @Suppress("DEPRECATION")
     fun enforce(context: Context): Boolean {
         if (Build.VERSION.SDK_INT >= 33) return false
-        val locale = locale(preference(context)) ?: Resources.getSystem().configuration.locales[0]
+        // Configuration.getLocales needs API 24; KitKat carries a single locale field.
+        val locale = locale(preference(context)) ?: Resources.getSystem().configuration.locale
+            ?: return false
         val resources = context.resources
-        if (resources.configuration.locales[0] == locale) return false
+        if (resources.configuration.locale == locale) return false
         val configuration = Configuration(resources.configuration).apply {
             setLocale(locale)
             setLayoutDirection(locale)

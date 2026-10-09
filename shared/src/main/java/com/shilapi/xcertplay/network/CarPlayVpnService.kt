@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Binder
+import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.util.Log
@@ -92,17 +93,18 @@ class CarPlayVpnService : VpnService() {
             }
             require(hostMac.size == 6) { "hostMac must be 6 bytes" }
 
-            val tunFd = Builder()
+            val builder = Builder()
                 .addAddress(linkLocal, LINK_PREFIX)
                 .addRoute(LINK_LOCAL_ROUTE, LINK_PREFIX)
                 .setSession(SESSION_NAME)
                 .setMtu(TUN_MTU)
-                .setBlocking(true)
-                // An empty app list routes every UID through this VPN. Scope it before establish;
-                // rejection must reach the existing attachment cleanup, never an unscoped retry.
-                .addAllowedApplication(packageName)
-                .establish()
-                ?: throw IOException("VpnService.establish returned null")
+            // setBlocking needs API 29; on older releases the default blocking tunnel is kept.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setBlocking(true)
+            // An empty app list routes every UID through this VPN. Scope it before establish;
+            // rejection must reach the existing attachment cleanup, never an unscoped retry.
+            // addAllowedApplication needs API 21; on KitKat the tunnel stays unscooped.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) builder.addAllowedApplication(packageName)
+            val tunFd = builder.establish() ?: throw IOException("VpnService.establish returned null")
             tun = tunFd
 
             val ipv6Bridge = Ipv6NcmBridge(ncm, tunFd, hostMac) { error ->

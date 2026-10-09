@@ -725,16 +725,14 @@ class DiPlayActivity : ComponentActivity() {
             isClickable = true
             isFocusable = true
             isSelected = selected
-            foreground = focusRing(12)
+            foregroundCompat(focusRing(12))
             contentDescription = getString(R.string.settings_open_category, title)
-            background = android.graphics.drawable.RippleDrawable(
-                ColorStateList.valueOf(RIPPLE),
+            background = rippleCompat(
                 GradientDrawable().apply {
                     setColor(if (selected) RAIL_SELECTED else Color.TRANSPARENT)
                     cornerRadius = dp(12).toFloat()
                     if (selected) setStroke(dp(1), RAIL_SELECTED_BORDER)
                 },
-                null,
             )
             setPadding(dp(8), 0, dp(12), 0)
             addView(View(this@DiPlayActivity).apply {
@@ -746,7 +744,10 @@ class DiPlayActivity : ComponentActivity() {
             }, LinearLayout.LayoutParams(dp(4), dp(34)).apply { marginEnd = dp(10) })
             addView(ImageView(this@DiPlayActivity).apply {
                 setImageResource(settingsCategoryIcon(category))
-                imageTintList = ColorStateList.valueOf(if (selected) ACCENT else TEXT)
+                // ImageView.setImageTintList needs API 21; the raw icon shows on KitKat.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    imageTintList = ColorStateList.valueOf(if (selected) ACCENT else TEXT)
+                }
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             }, LinearLayout.LayoutParams(dp(26), dp(26)).apply { marginEnd = dp(12) })
             addView(label(title, 16, if (selected) ACCENT else TEXT, true),
@@ -925,12 +926,13 @@ class DiPlayActivity : ComponentActivity() {
         isClickable = true
         isFocusable = true
         contentDescription = getString(R.string.settings_open_category, settingsCategoryTitle(category))
-        foreground = android.graphics.drawable.LayerDrawable(arrayOf(
+        // View.setForeground is API 23+ and RippleDrawable API 21+; KitKat keeps the plain row.
+        if (Build.VERSION.SDK_INT >= 23) foreground = android.graphics.drawable.LayerDrawable(arrayOf(
             android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(RIPPLE), null, null), focusRing(12)))
         setPadding(dp(16), 0, dp(16), 0)
         addView(ImageView(this@DiPlayActivity).apply {
             setImageResource(icon)
-            imageTintList = ColorStateList.valueOf(tint)
+            imageTintListCompat(tint)
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }, LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(14) })
         addView(column().apply {
@@ -939,7 +941,7 @@ class DiPlayActivity : ComponentActivity() {
         }, LinearLayout.LayoutParams(0, -2, 1f))
         addView(ImageView(this@DiPlayActivity).apply {
             setImageResource(R.drawable.ic_dp_chevron)
-            imageTintList = ColorStateList.valueOf(ACCENT)
+            imageTintListCompat(ACCENT)
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }, LinearLayout.LayoutParams(dp(22), dp(22)).apply { marginStart = dp(12) })
         setOnClickListener {
@@ -974,7 +976,8 @@ class DiPlayActivity : ComponentActivity() {
         setPadding(dp(16), dp(10), dp(16), dp(10))
         isClickable = true
         isFocusable = true
-        foreground = android.graphics.drawable.LayerDrawable(arrayOf(
+        // View.setForeground is API 23+ and RippleDrawable API 21+; KitKat keeps the plain card.
+        if (Build.VERSION.SDK_INT >= 23) foreground = android.graphics.drawable.LayerDrawable(arrayOf(
             android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(RIPPLE), null, null), focusRing(12)))
         contentDescription = getString(R.string.settings_open_category, settingsCategoryTitle(category))
         addView(label(settingsCategoryTitle(category), 17, TEXT, true))
@@ -1063,7 +1066,7 @@ class DiPlayActivity : ComponentActivity() {
                 val titles = mutableListOf(settingsCategoryTitle(category))
                 searchIndexSink = titles
                 settingsCategoryContent(column())
-                titles.forEach { index.putIfAbsent(it, category) }
+                titles.forEach { if (it !in index) index[it] = category }
             }
         } finally {
             searchIndexSink = null
@@ -2163,7 +2166,8 @@ class DiPlayActivity : ComponentActivity() {
             slider = SeekBar(context).apply {
                 max = steps.lastIndex
                 progress = steps.indexOf(current).coerceIn(steps.indices)
-                minHeight = dp(44)
+                // ProgressBar.setMinHeight is API 29+; View.setMinimumHeight has existed since API 1.
+                minimumHeight = dp(44)
                 setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                     override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                         val value = steps[progress.coerceIn(steps.indices)]
@@ -2199,7 +2203,7 @@ class DiPlayActivity : ComponentActivity() {
             setPadding(0, dp(16), 0, dp(16))
         })
         body.addView(button(getString(R.string.copy_command), false) {
-            getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(
+            (getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(
                 android.content.ClipData.newPlainText(getString(R.string.clipboard_usage_access), command))
             toast(getString(R.string.copied_to_the_car_clipboard_run_the_command_on_your_comput))
         }, matchButton(0, 56))
@@ -2336,7 +2340,7 @@ class DiPlayActivity : ComponentActivity() {
             setBackgroundColor(0x22FFFFFF)
         })
         body.addView(button(getString(R.string.copy_command), false) {
-            getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(
+            (getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(
                 android.content.ClipData.newPlainText("DiPlay ADB Command", adbCmd)
             )
             toast(getString(R.string.copied_to_the_car_clipboard_run_the_command_on_your_comput))
@@ -3631,7 +3635,8 @@ class DiPlayActivity : ComponentActivity() {
             setImageBitmap(custom ?: BitmapFactory.decodeResource(resources, R.raw.ic_car_home))
             scaleType = ImageView.ScaleType.CENTER_CROP
             background = rounded(SURFACE, BORDER)
-            clipToOutline = true
+            // View.setClipToOutline is API 21+; KitKat keeps the rounded background only.
+            if (Build.VERSION.SDK_INT >= 21) clipToOutline = true
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }, LinearLayout.LayoutParams(dp(72), dp(72)).apply { marginEnd = dp(16) })
         val text = column()
@@ -3800,21 +3805,25 @@ class DiPlayActivity : ComponentActivity() {
     }
 
     private fun resetWirelessGroup() {
-        val manager = getSystemService(android.net.wifi.p2p.WifiP2pManager::class.java)
+        val manager = getSystemService(android.content.Context.WIFI_P2P_SERVICE) as? android.net.wifi.p2p.WifiP2pManager
         if (manager == null) { toast(getString(R.string.this_head_unit_does_not_support_wi_fi_direct)); return }
         val channel = manager.initialize(this, mainLooper, null)
+        // WifiP2pManager.Channel.close is API 27+; on older systems the channel lives until the process ends.
+        fun closeChannel() {
+            if (Build.VERSION.SDK_INT >= 27) channel.close()
+        }
         try {
             manager.requestGroupInfo(channel) { group ->
-                if (group == null) { channel.close(); connect(true); return@requestGroupInfo }
+                if (group == null) { closeChannel(); connect(true); return@requestGroupInfo }
                 manager.removeGroup(channel, object : android.net.wifi.p2p.WifiP2pManager.ActionListener {
                     override fun onSuccess() {
                         val deadline = android.os.SystemClock.elapsedRealtime() + 4000
                         fun waitUntilRemoved() {
                             manager.requestGroupInfo(channel) { remaining ->
                                 when {
-                                    remaining == null -> { channel.close(); if (!isFinishing && !isDestroyed) connect(true) }
+                                    remaining == null -> { closeChannel(); if (!isFinishing && !isDestroyed) connect(true) }
                                     android.os.SystemClock.elapsedRealtime() >= deadline -> {
-                                        channel.close(); toast(getString(R.string.wi_fi_direct_is_still_busy_close_the_other_projection_app))
+                                        closeChannel(); toast(getString(R.string.wi_fi_direct_is_still_busy_close_the_other_projection_app))
                                     }
                                     else -> handler.postDelayed({ waitUntilRemoved() }, 200)
                                 }
@@ -3822,11 +3831,11 @@ class DiPlayActivity : ComponentActivity() {
                         }
                         waitUntilRemoved()
                     }
-                    override fun onFailure(reason: Int) { channel.close(); toast(getString(R.string.could_not_reset_wi_fi_direct_close_the_other_projection_ap)) }
+                    override fun onFailure(reason: Int) { closeChannel(); toast(getString(R.string.could_not_reset_wi_fi_direct_close_the_other_projection_ap)) }
                 })
             }
         } catch (_: SecurityException) {
-            channel.close(); permissionHelp(getString(R.string.wireless_permissions), getString(R.string.allow_nearby_devices_and_on_older_android_versions_locatio))
+            closeChannel(); permissionHelp(getString(R.string.wireless_permissions), getString(R.string.allow_nearby_devices_and_on_older_android_versions_locatio))
         }
     }
 
@@ -4053,10 +4062,8 @@ class DiPlayActivity : ComponentActivity() {
         val target = channelButtons.getOrNull(index) ?: return
         target.isSelected = selected
         target.setTextColor(if (selected) BG else TEXT)
-        target.background = android.graphics.drawable.RippleDrawable(
-            ColorStateList.valueOf(RIPPLE),
+        target.background = rippleCompat(
             rounded(if (selected) ACCENT else SURFACE, if (selected) ACCENT else BORDER),
-            null
         )
     }
 
@@ -4073,7 +4080,7 @@ class DiPlayActivity : ComponentActivity() {
                 isAllCaps = false
                 textSize = 16f
                 minHeight = dp(48)
-                stateListAnimator = null
+                if (Build.VERSION.SDK_INT >= 21) stateListAnimator = null
                 setOnClickListener {
                     val previous = navigationStreamType
                     navigationStreamType = i
@@ -4085,9 +4092,15 @@ class DiPlayActivity : ComponentActivity() {
                 }
             }
             val params = GridLayout.LayoutParams().apply {
-                width = 0
                 height = dp(48)
-                columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                // GridLayout cell weights need API 21; KitKat falls back to fixed-width columns.
+                if (Build.VERSION.SDK_INT >= 21) {
+                    width = 0
+                    columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f)
+                } else {
+                    width = dp(40)
+                    columnSpec = GridLayout.spec(GridLayout.UNDEFINED)
+                }
                 setMargins(dp(4), dp(4), dp(4), dp(4))
             }
             grid.addView(btn, params)
@@ -4113,7 +4126,7 @@ class DiPlayActivity : ComponentActivity() {
         val card = card()
         val heading = row().apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, 0, dp(16)) }
         if (icon != null) heading.addView(ImageView(this).apply {
-            setImageResource(icon); imageTintList = ColorStateList.valueOf(ACCENT)
+            setImageResource(icon); imageTintListCompat(ACCENT)
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }, LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(12) })
         heading.addView(label(title, 22, TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
@@ -4214,6 +4227,20 @@ class DiPlayActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 21) letterSpacing = value
     }
 
+    // View.setForeground exists only on API 23+; KitKat views get no foreground overlay.
+    private fun View.foregroundCompat(drawable: android.graphics.drawable.Drawable?) {
+        if (Build.VERSION.SDK_INT >= 23) foreground = drawable
+    }
+
+    // RippleDrawable needs API 21; older systems fall back to the plain drawable without ripple.
+    private fun rippleCompat(content: android.graphics.drawable.Drawable?): android.graphics.drawable.Drawable? =
+        if (Build.VERSION.SDK_INT >= 21) android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(RIPPLE), content, null) else content
+
+    // ImageView.setImageTintList exists only on API 21+; skip tinting on KitKat.
+    private fun ImageView.imageTintListCompat(color: Int) {
+        if (Build.VERSION.SDK_INT >= 21) imageTintList = ColorStateList.valueOf(color)
+    }
+
     private fun label(value: String, size: Int, color: Int, bold: Boolean = false) = TextView(this).apply {
         text = value; textSize = size.toFloat(); setTextColor(color); gravity = Gravity.CENTER_VERTICAL
         typeface = if (bold) Typeface.create("sans-serif-medium", Typeface.NORMAL) else Typeface.create("sans-serif", Typeface.NORMAL)
@@ -4222,10 +4249,11 @@ class DiPlayActivity : ComponentActivity() {
     private fun button(title: String, primary: Boolean, click: () -> Unit) = SettingButton(this).apply {
         isAllCaps = false; textSize = 18f; setTextColor(if (primary) BG else TEXT)
         typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-        background = android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(RIPPLE), rounded(if (primary) ACCENT else BUTTON, if (primary) ACCENT else BORDER), null)
-        setPadding(dp(16), 0, dp(16), 0); minHeight = dp(56); stateListAnimator = null
+        background = rippleCompat(rounded(if (primary) ACCENT else BUTTON, if (primary) ACCENT else BORDER))
+        setPadding(dp(16), 0, dp(16), 0); minHeight = dp(56)
+        if (Build.VERSION.SDK_INT >= 21) stateListAnimator = null
         compoundDrawablePadding = dp(12)
-        foreground = focusRing()
+        foregroundCompat(focusRing())
         text = title
         searchIndexSink?.add(title.substringBefore(VALUE_SEPARATOR))
         setOnClickListener { click() }
@@ -4258,7 +4286,7 @@ class DiPlayActivity : ComponentActivity() {
             super.setText(styled, BufferType.SPANNABLE)
             gravity = Gravity.CENTER_VERTICAL or Gravity.START
             setCompoundDrawablesRelativeWithIntrinsicBounds(null, null,
-                androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_dp_chevron)?.mutate()?.apply { setTint(ACCENT) }, null)
+                androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_dp_chevron)?.mutate()?.apply { if (Build.VERSION.SDK_INT >= 21) setTint(ACCENT) }, null)
         }
     }
     // Remote and D-pad users need to see where they are; touch mode never shows it.

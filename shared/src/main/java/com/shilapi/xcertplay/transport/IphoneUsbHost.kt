@@ -232,6 +232,10 @@ class IphoneUsbHost(
     }
 
     private fun openIap2UsbSession(device: UsbDevice): Iap2UsbSession {
+        // Configuration selection, alternate settings and the USBMUX session need API 21.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+            throw IphoneUsbException.Protocol("iPhone CarPlay USB session needs Android 5.0 or newer")
+        }
         requireConfiguredDevice(device)
         if (!usbManager.hasPermission(device)) {
             throw IphoneUsbException.PermissionDenied("USB permission has not been granted")
@@ -370,7 +374,9 @@ class Iap2UsbSession internal constructor(
             val queueResult = synchronized(stateLock) {
                 checkOpenLocked()
                 pendingRead = request
-                readQueuePolicy.queue(buffer, ::checkOpenLocked, request::queue)
+                // UsbRequest.queue(ByteBuffer) needs API 26; the legacy 2-arg form queues the
+                // same remaining bytes and works on every release.
+                readQueuePolicy.queue(buffer, ::checkOpenLocked) { queued -> request.queue(queued, queued.remaining()) }
             }
             if (!queueResult.queued) {
                 throw IphoneUsbException.DeviceUnavailable(
@@ -387,7 +393,10 @@ class Iap2UsbSession internal constructor(
                 )
             }
             val completed = try {
-                connection.requestWait(timeoutMillis)
+                // requestWait(timeout) needs API 26; older releases block until a request
+                // completes or the connection closes, with no timeout.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) connection.requestWait(timeoutMillis)
+                else connection.requestWait()
             } catch (_: TimeoutException) {
                 drainCancelledRead(request)
                 return@synchronized null
@@ -439,7 +448,8 @@ class Iap2UsbSession internal constructor(
             throw failSession("Android could not cancel timed out USBMUX read request")
         }
         val completed = try {
-            connection.requestWait(CANCEL_DRAIN_TIMEOUT_MILLIS)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) connection.requestWait(CANCEL_DRAIN_TIMEOUT_MILLIS)
+            else connection.requestWait()
         } catch (_: TimeoutException) {
             throw failSession("Timed out draining cancelled USBMUX read request")
         }

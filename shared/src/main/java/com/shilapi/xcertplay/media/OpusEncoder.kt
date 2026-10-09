@@ -2,6 +2,7 @@ package com.shilapi.xcertplay.media
 
 import android.media.MediaCodec
 import android.media.MediaFormat
+import android.os.Build
 import android.util.Log
 import java.io.Closeable
 
@@ -53,7 +54,14 @@ internal class OpusEncoder(bitrate: Int) : Closeable {
             return emptyList()
         }
         if (inputIndex >= 0) {
-            val input = codec.getInputBuffer(inputIndex)
+            // MediaCodec buffer accessors are API 21; the deprecated array API returns
+            // the same buffers on older platforms.
+            val input = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                codec.getInputBuffer(inputIndex)
+            } else {
+                @Suppress("DEPRECATION")
+                codec.inputBuffers[inputIndex]
+            }
             if (input == null || pcm.size > input.remaining()) {
                 codec.queueInputBuffer(inputIndex, 0, 0, presentationTimeUs, 0)
             } else {
@@ -90,7 +98,12 @@ internal class OpusEncoder(bitrate: Int) : Closeable {
                         codec.releaseOutputBuffer(index, false)
                         continue
                     }
-                    val buffer = codec.getOutputBuffer(index)
+                    val buffer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                        codec.getOutputBuffer(index)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        codec.outputBuffers[index]
+                    }
                     if (buffer != null && bufferInfo.size > 0) {
                         val bytes = ByteArray(bufferInfo.size)
                         buffer.position(bufferInfo.offset)

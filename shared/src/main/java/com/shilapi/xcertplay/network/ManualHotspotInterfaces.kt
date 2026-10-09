@@ -17,23 +17,42 @@ internal class ManualHotspotInterfaces(
     private val context: Context,
     private val onDiagnostic: (String) -> Unit = {},
 ) : Closeable {
-    private val connectivity = context.getSystemService(ConnectivityManager::class.java)
+    private val connectivity =
+        context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
     private val publicTethering = if (Build.VERSION.SDK_INT >= 36) PublicTethering(context) else null
     private var lastLegacyDiagnostic: String? = null
 
     fun sample(): HotspotNetworkSnapshot {
-        val ap = publicTethering?.interfaces ?: legacyApInterfaces()
-        val before = runCatching { connectivity?.activeNetwork }
+        // PublicTethering only exists on API 36+; restate that here so lint can see it.
+        val ap = if (Build.VERSION.SDK_INT >= 36) {
+            publicTethering?.interfaces ?: legacyApInterfaces()
+        } else {
+            legacyApInterfaces()
+        }
+        val before = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) connectivity?.activeNetwork else null
+        }
         val upstreams = runCatching {
             checkNotNull(connectivity)
-            connectivity.allNetworks.mapNotNull { network ->
-                val caps = checkNotNull(connectivity.getNetworkCapabilities(network))
-                val links = checkNotNull(connectivity.getLinkProperties(network))
-                links.interfaceName?.takeIf { caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) }
-            }.toSet()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                connectivity.allNetworks.mapNotNull { network ->
+                    val caps = checkNotNull(connectivity.getNetworkCapabilities(network))
+                    val links = checkNotNull(connectivity.getLinkProperties(network))
+                    links.interfaceName?.takeIf { caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) }
+                }.toSet()
+            } else {
+                // Per-network enumeration does not exist before API 21.
+                emptySet()
+            }
         }.getOrNull()
         val defaultName = runCatching {
-            before.getOrNull()?.let { connectivity?.getLinkProperties(it)?.interfaceName }
+            before.getOrNull()?.let {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    connectivity?.getLinkProperties(it)?.interfaceName
+                } else {
+                    null
+                }
+            }
         }.getOrNull()
         val interfaces = runCatching {
             Collections.list(NetworkInterface.getNetworkInterfaces()).mapNotNull { iface ->
@@ -45,7 +64,9 @@ internal class ManualHotspotInterfaces(
                 }.getOrNull()
             }
         }.getOrDefault(emptyList())
-        val after = runCatching { connectivity?.activeNetwork }
+        val after = runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) connectivity?.activeNetwork else null
+        }
         return HotspotNetworkSnapshot(
             interfaces, ap, upstreams, defaultName,
             consistent = before.isSuccess && after.isSuccess && before.getOrNull() == after.getOrNull(),
@@ -73,7 +94,10 @@ internal class ManualHotspotInterfaces(
         ap
     }.getOrNull()
 
-    override fun close() { publicTethering?.close() }
+    override fun close() {
+        // PublicTethering is registered only on API 36+, so nothing exists to release below it.
+        if (Build.VERSION.SDK_INT >= 36) publicTethering?.close()
+    }
 
     @RequiresApi(36)
     private class PublicTethering(context: Context) : Closeable {

@@ -4,6 +4,8 @@ import android.hardware.usb.UsbConfiguration
 import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
+import android.os.Build
+import androidx.annotation.RequiresApi
 
 /**
  * Finds the NCM control/data interface pair inside an active iPhone configuration.
@@ -29,9 +31,12 @@ object NcmFunctionDiscovery {
     )
 
     fun find(configuration: UsbConfiguration): NcmFunction? {
+        // UsbConfiguration introspection is API 21; older platforms cannot expose one anyway.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return null
         return findCdcNcm(configuration)
     }
 
+    @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
     private fun findCdcNcm(configuration: UsbConfiguration): NcmFunction? {
         val control = interfaces(configuration).firstOrNull {
             it.interfaceClass == CONTROL_CLASS && it.interfaceSubclass == CONTROL_SUBCLASS
@@ -50,6 +55,7 @@ object NcmFunctionDiscovery {
         return NcmFunction(control, data, statusIn, endpoints.first, endpoints.second)
     }
 
+    @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
     private fun interfaces(configuration: UsbConfiguration): List<UsbInterface> =
         (0 until configuration.interfaceCount).map(configuration::getInterface)
 

@@ -21,7 +21,9 @@ internal class DiLink51ClusterMonitor(context: Context, private val onState: (Cl
     private val seen = linkedMapOf<EventKey, Long>()
     // This firmware includes the system getter. If Android hides it, single-instance stock
     // activities still work, but an overlapping recreation conservatively hides the map.
-    private val instanceIdMethod = runCatching { UsageEvents.Event::class.java.getMethod("getInstanceId") }.getOrNull()
+    private val instanceIdMethod = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+        runCatching { UsageEvents.Event::class.java.getMethod("getInstanceId") }.getOrNull()
+    } else null
     @Volatile private var stopped = false
     private data class EventKey(val pkg: String?, val name: String?, val id: Int, val type: Int, val time: Long)
 
@@ -41,6 +43,8 @@ internal class DiLink51ClusterMonitor(context: Context, private val onState: (Cl
 
     private fun poll() {
         if (stopped) return
+        // UsageStatsManager needs API 21; the poller is only scheduled on newer Android.
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.LOLLIPOP) return
         val now = System.currentTimeMillis()
         val snapshot = try {
             if (!hasAccess(context)) {
@@ -53,8 +57,8 @@ internal class DiLink51ClusterMonitor(context: Context, private val onState: (Cl
                     seen.clear()
                     since = bootTime()
                 }
-                val events = context.getSystemService(UsageStatsManager::class.java).queryEvents(since, now)
-                    ?: throw IllegalStateException("Usage events unavailable")
+                val events = (context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager)
+                    ?.queryEvents(since, now) ?: throw IllegalStateException("Usage events unavailable")
                 val event = UsageEvents.Event()
                 while (events.hasNextEvent()) {
                     events.getNextEvent(event)

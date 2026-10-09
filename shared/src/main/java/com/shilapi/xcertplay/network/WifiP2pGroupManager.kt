@@ -45,7 +45,7 @@ class WifiP2pGroupManager(
         require(WifiP2pChannels.isValid(preferredChannel)) { "Unsupported Wi-Fi Direct channel: $preferredChannel" }
     }
     private val appContext = context.applicationContext
-    private val p2pManager = appContext.getSystemService(WifiP2pManager::class.java)
+    private val p2pManager = appContext.getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager
         ?: throw IllegalStateException("WifiP2pManager is unavailable")
     private val stateLock = Object()
     // The legacy channel API changes shared supplicant state, rather than this Channel object.
@@ -318,7 +318,10 @@ class WifiP2pGroupManager(
         }
         synchronized(legacyChannelLock) {
             if (activeChannel != null) releaseLegacyChannelRestriction(activeChannel)
-            activeChannel?.close()
+            // WifiP2pManager.Channel.close needs API 27; on older releases the channel dies with the process.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                activeChannel?.close()
+            }
         }
         activeThread?.quitSafely()
     }
@@ -711,20 +714,45 @@ class WifiP2pGroupManager(
 
     @Suppress("DEPRECATION")
     private fun readStation(): Station = runCatching {
-        val info = appContext.getSystemService(WifiManager::class.java)?.connectionInfo
-        Station(info?.supplicantState, info?.frequency?.takeIf { it > 0 })
+        val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        val info = wifi?.connectionInfo
+        // WifiInfo.getFrequency needs API 21.
+        val frequency = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            info?.frequency?.takeIf { it > 0 }
+        } else {
+            null
+        }
+        Station(info?.supplicantState, frequency)
     }.getOrDefault(Station(null, null))
 
     private fun checkPrerequisites(station: Station) {
-        val wifi = appContext.getSystemService(WifiManager::class.java)
-        val fiveGhzSupported = runCatching { wifi?.is5GHzBandSupported }.getOrNull()
+        val wifi = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        val fiveGhzSupported = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            runCatching { wifi?.is5GHzBandSupported }.getOrNull()
+        } else {
+            null
+        }
         val wifiEnabled = runCatching { wifi?.isWifiEnabled }.getOrNull()
-        val locationEnabled = runCatching {
-            appContext.getSystemService(LocationManager::class.java)?.isLocationEnabled
-        }.getOrNull()
+        val locationEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            runCatching {
+                (appContext.getSystemService(Context.LOCATION_SERVICE) as? LocationManager)?.isLocationEnabled
+            }.getOrNull()
+        } else {
+            // LocationManager.isLocationEnabled needs API 28; this check is diagnostic only.
+            null
+        }
         val required = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.NEARBY_WIFI_DEVICES
             else Manifest.permission.ACCESS_FINE_LOCATION
-        val granted = appContext.checkSelfPermission(required) == PackageManager.PERMISSION_GRANTED
+        val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            appContext.checkSelfPermission(required) == PackageManager.PERMISSION_GRANTED
+        } else {
+            // Context.checkSelfPermission needs API 23; checkPermission works on every version.
+            appContext.checkPermission(
+                required,
+                android.os.Process.myPid(),
+                android.os.Process.myUid(),
+            ) == PackageManager.PERMISSION_GRANTED
+        }
         val locationAccessMode = if (Build.VERSION.SDK_INT in 29..32) runCatching {
             appContext.getSystemService(AppOpsManager::class.java)?.unsafeCheckOpNoThrow(
                 AppOpsManager.OPSTR_FINE_LOCATION, android.os.Process.myUid(), appContext.packageName)
@@ -827,7 +855,10 @@ class WifiP2pGroupManager(
         }
         synchronized(legacyChannelLock) {
             if (failedChannel != null) releaseLegacyChannelRestriction(failedChannel)
-            failedChannel?.close()
+            // WifiP2pManager.Channel.close needs API 27; on older releases the channel dies with the process.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                failedChannel?.close()
+            }
         }
         failedThread?.quitSafely()
     }

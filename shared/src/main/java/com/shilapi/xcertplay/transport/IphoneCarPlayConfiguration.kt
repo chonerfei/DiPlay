@@ -5,7 +5,9 @@ import android.hardware.usb.UsbConstants
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
+import android.os.Build
 import android.util.Log
+import androidx.annotation.RequiresApi
 
 /**
  * Descriptor-based discovery of the iPhone's CarPlay configuration.
@@ -27,8 +29,11 @@ object IphoneCarPlayConfiguration {
     private const val PREFERRED_USBMUX_OUT = 0x04
     private const val PREFERRED_USBMUX_IN = 0x85
 
+    // UsbDevice.getConfigurationCount/getConfiguration and the UsbConfiguration class itself
+    // need API 21; KitKat exposes no configuration enumeration and finds no CarPlay match.
+    @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
     fun find(device: UsbDevice): UsbConfiguration? {
-        val configurations = (0 until device.configurationCount).map(device::getConfiguration)
+        val configurations = (0 until device.configurationCount).map { device.getConfiguration(it) }
         val chosen = configurations.firstOrNull { usbMuxInterface(it) != null && hasCdcNcm(it) && hasAppleEthernet(it) }
             ?: configurations.firstOrNull { usbMuxInterface(it) != null && hasCdcNcm(it) }
         Log.i(
@@ -39,6 +44,7 @@ object IphoneCarPlayConfiguration {
         return chosen
     }
 
+    @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
     fun describe(configuration: UsbConfiguration): String =
         (0 until configuration.interfaceCount).joinToString(",") { index ->
             val usbInterface = configuration.getInterface(index)
@@ -49,8 +55,9 @@ object IphoneCarPlayConfiguration {
                 "x${usbInterface.endpointCount}"
         }
 
+    @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
     fun usbMuxInterface(configuration: UsbConfiguration): UsbInterface? =
-        (0 until configuration.interfaceCount).map(configuration::getInterface).firstOrNull {
+        (0 until configuration.interfaceCount).map { configuration.getInterface(it) }.firstOrNull {
             it.interfaceClass == USBMUX_CLASS &&
                 it.interfaceSubclass == USBMUX_SUBCLASS &&
                 it.interfaceProtocol == USBMUX_PROTOCOL
@@ -77,13 +84,15 @@ object IphoneCarPlayConfiguration {
         return if (out != null && input != null) out to input else null
     }
 
+    @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
     private fun hasCdcNcm(configuration: UsbConfiguration): Boolean =
-        (0 until configuration.interfaceCount).map(configuration::getInterface).any {
+        (0 until configuration.interfaceCount).map { configuration.getInterface(it) }.any {
             it.interfaceClass == NCM_CONTROL_CLASS && it.interfaceSubclass == NCM_CONTROL_SUBCLASS
         }
 
+    @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
     private fun hasAppleEthernet(configuration: UsbConfiguration): Boolean =
-        (0 until configuration.interfaceCount).map(configuration::getInterface).any {
+        (0 until configuration.interfaceCount).map { configuration.getInterface(it) }.any {
             it.interfaceClass == APPLE_ETHERNET_CLASS &&
                 it.interfaceSubclass == APPLE_ETHERNET_SUBCLASS &&
                 it.interfaceProtocol == APPLE_ETHERNET_PROTOCOL

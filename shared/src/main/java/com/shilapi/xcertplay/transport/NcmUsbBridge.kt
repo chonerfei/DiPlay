@@ -236,7 +236,11 @@ class NcmUsbBridge internal constructor(
                 }
                 if (!readQueued) {
                     directReadBuffer.clear()
-                    val queued = readQueuePolicy.queue(directReadBuffer, ::checkOpenLocked, current::queue)
+                    val queued = readQueuePolicy.queue(directReadBuffer, ::checkOpenLocked) { queued ->
+                        // UsbRequest.queue(ByteBuffer) needs API 26; the legacy 2-arg form
+                        // queues the same remaining bytes on every release.
+                        current.queue(queued, queued.remaining())
+                    }
                     if (!queued.queued) throw failSession(
                         "Android could not queue the NCM read request (api=${Build.VERSION.SDK_INT} " +
                             "endpoint=${describeUsbEndpoint(inEndpoint)} firstBytes=${queued.firstBytes} " +
@@ -262,7 +266,9 @@ class NcmUsbBridge internal constructor(
         }
         try {
             val completed = try {
-                connection.requestWait(timeoutMillis.coerceAtLeast(1))
+                // requestWait(timeout) needs API 26; older releases block without a timeout.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) connection.requestWait(timeoutMillis.coerceAtLeast(1))
+                else connection.requestWait()
             } catch (_: TimeoutException) {
                 // Nothing arrived yet; the request stays queued for the next call. USBMUX owns
                 // authoritative detach/failure detection for the same phone.
@@ -323,6 +329,10 @@ class NcmUsbBridge internal constructor(
             function: NcmFunctionDiscovery.NcmFunction,
             onDiagnostic: (String) -> Unit = {},
         ): NcmUsbBridge {
+            // UsbInterface.getAlternateSetting and UsbDeviceConnection.setInterface need API 21.
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
+                throw IphoneUsbException.Protocol("NCM bridging needs Android 5.0 or newer")
+            }
             val claimed = ArrayList<UsbInterface>(2)
             try {
                 val descriptorHostMac = readNcmHostMac(connection, function.control.id)
