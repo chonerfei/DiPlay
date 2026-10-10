@@ -30,7 +30,7 @@ object IphoneCarPlayConfiguration {
     private const val PREFERRED_USBMUX_IN = 0x85
 
     // UsbDevice.getConfigurationCount/getConfiguration and the UsbConfiguration class itself
-    // need API 21; KitKat exposes no configuration enumeration and finds no CarPlay match.
+    // need API 21.
     @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
     fun find(device: UsbDevice): UsbConfiguration? {
         val configurations = (0 until device.configurationCount).map { device.getConfiguration(it) }
@@ -43,6 +43,50 @@ object IphoneCarPlayConfiguration {
         )
         return chosen
     }
+
+    /**
+     * KitKat counterpart of [find] for the re-enumerated CarPlay device.
+     *
+     * KitKat exposes no configuration enumeration: UsbDevice.getInterface(i) flattens every
+     * interface descriptor of every configuration, including alternate settings. The CarPlay
+     * vendor-request re-enumeration leaves the CarPlay configuration active, so the flat
+     * class/subclass/protocol scan mirrors [find]'s discrimination on the same features. A
+     * USBMUX interface without the NCM function is the plain iAP2 configuration and is rejected.
+     */
+    fun findUsbMuxInterface(device: UsbDevice): UsbInterface? {
+        val interfaces = (0 until device.interfaceCount).map(device::getInterface)
+        val usbMux = interfaces.firstOrNull(::isUsbMuxInterface)
+        val hasNcm = hasCdcNcmInterface(interfaces)
+        val hasEthernet = hasAppleEthernetInterface(interfaces)
+        Log.i(
+            TAG,
+            "carplay flat usbmux chosen=${usbMux?.id} ncm=$hasNcm ethernet=$hasEthernet " +
+                "detail=${interfaces.joinToString(",") { describeInterface(it) }}",
+        )
+        return usbMux.takeIf { hasNcm }
+    }
+
+    fun isUsbMuxInterface(usbInterface: UsbInterface): Boolean =
+        usbInterface.interfaceClass == USBMUX_CLASS &&
+            usbInterface.interfaceSubclass == USBMUX_SUBCLASS &&
+            usbInterface.interfaceProtocol == USBMUX_PROTOCOL
+
+    private fun hasCdcNcmInterface(interfaces: List<UsbInterface>): Boolean = interfaces.any {
+        it.interfaceClass == NCM_CONTROL_CLASS && it.interfaceSubclass == NCM_CONTROL_SUBCLASS
+    }
+
+    private fun hasAppleEthernetInterface(interfaces: List<UsbInterface>): Boolean = interfaces.any {
+        it.interfaceClass == APPLE_ETHERNET_CLASS &&
+            it.interfaceSubclass == APPLE_ETHERNET_SUBCLASS &&
+            it.interfaceProtocol == APPLE_ETHERNET_PROTOCOL
+    }
+
+    private fun describeInterface(usbInterface: UsbInterface): String =
+        "${usbInterface.id}" +
+            ":${usbInterface.interfaceClass.toString(16)}" +
+            ".${usbInterface.interfaceSubclass.toString(16)}" +
+            ".${usbInterface.interfaceProtocol.toString(16)}" +
+            "x${usbInterface.endpointCount}"
 
     @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
     fun describe(configuration: UsbConfiguration): String =

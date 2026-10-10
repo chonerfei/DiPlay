@@ -2,6 +2,7 @@ package com.shilapi.xcertplay.transport
 
 import android.hardware.usb.UsbConfiguration
 import android.hardware.usb.UsbConstants
+import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbEndpoint
 import android.hardware.usb.UsbInterface
 import android.os.Build
@@ -31,9 +32,37 @@ object NcmFunctionDiscovery {
     )
 
     fun find(configuration: UsbConfiguration): NcmFunction? {
-        // UsbConfiguration introspection is API 21; older platforms cannot expose one anyway.
+        // UsbConfiguration introspection is API 21; older platforms use findFromDevice instead.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return null
         return findCdcNcm(configuration)
+    }
+
+    /**
+     * KitKat counterpart of [find] on the re-enumerated CarPlay device.
+     *
+     * KitKat exposes no configuration enumeration: UsbDevice.getInterface(i) flattens every
+     * interface descriptor of every configuration, and each alternate setting appears as its
+     * own UsbInterface. The data alternate that carries the bulk endpoints is therefore the
+     * only 0x0a entry with endpoints, which replaces the alternate-setting preference of
+     * [findCdcNcm].
+     */
+    fun findFromDevice(device: UsbDevice): NcmFunction? {
+        val interfaces = (0 until device.interfaceCount).map(device::getInterface)
+        val control = interfaces.firstOrNull {
+            it.interfaceClass == CONTROL_CLASS && it.interfaceSubclass == CONTROL_SUBCLASS
+        } ?: return null
+        val data = interfaces
+            .filter { it.interfaceClass == DATA_CLASS && bulkEndpoints(it) != null }
+            .firstOrNull()
+            ?: return null
+        val endpoints = bulkEndpoints(data) ?: return null
+        val statusIn = (0 until control.endpointCount)
+            .map(control::getEndpoint)
+            .singleOrNull {
+                it.direction == UsbConstants.USB_DIR_IN &&
+                    it.type == UsbConstants.USB_ENDPOINT_XFER_INT
+            }
+        return NcmFunction(control, data, statusIn, endpoints.first, endpoints.second)
     }
 
     @RequiresApi(Build.VERSION_CODES.LOLLIPOP)

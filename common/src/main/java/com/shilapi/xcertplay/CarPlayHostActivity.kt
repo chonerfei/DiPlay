@@ -447,6 +447,9 @@ class CarPlayHostActivity : ComponentActivity() {
     private var gestureStartY = 0f
     private var recoveryPendingAfterMenu = false
     private var failurePendingAfterMenu: CarPlayStatus.Failed? = null
+
+    /** Last CarPlayStatus reported by the active controller; drives the foreground reclaim. */
+    private var lastSessionStatus: CarPlayStatus? = null
     private val shuttingDown = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
     private var sidePanel: LinearLayout? = null
@@ -1219,8 +1222,44 @@ class CarPlayHostActivity : ComponentActivity() {
         isActivityStarted = false
         logThemeState(ThemeModeDiagnostics.Source.STOP, resources.configuration)
         mainHandler.removeCallbacks(pollConfiguration)
+        // The stock iPod application steals the foreground while a CarPlay session is being
+        // established or running; claim the front again unless the user left on purpose.
+        if (!isFinishing && !isChangingConfigurations && !shuttingDown.get() &&
+            controller != null && lastSessionStatus?.sessionInFlight() == true
+        ) {
+            mainHandler.post { reclaimForeground() }
+        }
         super.onStop()
         if (!isFinishing && !isChangingConfigurations) CenterMapOverlay.scheduleShow()
+    }
+
+    /** Connection stages from the first USB discovery attempt to a live session. */
+    private fun CarPlayStatus.sessionInFlight(): Boolean = when (this) {
+        CarPlayStatus.DiscoveringIphone,
+        CarPlayStatus.RequestingIphonePermission,
+        CarPlayStatus.WaitingForReenumeration,
+        CarPlayStatus.SelectingConfiguration,
+        CarPlayStatus.OpeningDataPaths,
+        CarPlayStatus.Pairing,
+        CarPlayStatus.ConnectingControl,
+        CarPlayStatus.AttachingNetwork,
+        CarPlayStatus.RunningControl,
+        CarPlayStatus.ConnectingBluetooth,
+        CarPlayStatus.RunningWireless,
+        CarPlayStatus.WirelessActive,
+        CarPlayStatus.WirelessActiveFallback,
+        -> true
+        else -> false
+    }
+
+    private fun reclaimForeground() {
+        if (isDestroyed || isFinishing || shuttingDown.get()) return
+        try {
+            startActivity(Intent(this, CarPlayHostActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            appendLog("Foreground: reclaimed after another application took focus")
+        } catch (error: Throwable) {
+            appendLog("Foreground reclaim failed: ${error.message}")
+        }
     }
 
     /** Shows the dashboard map as a card on the centre screen while DiPlay is in the background. */
@@ -3904,6 +3943,7 @@ class CarPlayHostActivity : ComponentActivity() {
         controllerGeneration: Int,
     ): (CarPlayStatus) -> Unit = report@{ status ->
         if (controllerGeneration != restartGeneration) return@report
+        lastSessionStatus = status
         if (menuOpen) {
             if (status is CarPlayStatus.Failed) failurePendingAfterMenu = status
             return@report

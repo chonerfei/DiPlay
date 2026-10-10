@@ -329,10 +329,6 @@ class NcmUsbBridge internal constructor(
             function: NcmFunctionDiscovery.NcmFunction,
             onDiagnostic: (String) -> Unit = {},
         ): NcmUsbBridge {
-            // UsbInterface.getAlternateSetting and UsbDeviceConnection.setInterface need API 21.
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
-                throw IphoneUsbException.Protocol("NCM bridging needs Android 5.0 or newer")
-            }
             val claimed = ArrayList<UsbInterface>(2)
             try {
                 val descriptorHostMac = readNcmHostMac(connection, function.control.id)
@@ -341,13 +337,14 @@ class NcmUsbBridge internal constructor(
                     "ncm descriptor hostMac=${descriptorHostMac?.macString() ?: "unavailable"}",
                 )
                 // Apple's Ethernet function exposes control and data as alternate settings of the
-                // same interface id, so it must be claimed once and switched with setInterface.
+                // same interface id on API 21+, so it must be claimed once and switched with
+                // setInterface. KitKat flattens each setting into its own UsbInterface instead.
                 val sameInterface = function.control.id == function.data.id
                 val first = if (sameInterface) function.data else function.control
                 val firstClaimed = connection.claimInterface(first, true)
                 Log.i(
                     IphoneCarPlayConfiguration.TAG,
-                    "claim iface=${first.id}/${first.alternateSetting} class=${first.interfaceClass}" +
+                    "claim iface=${first.id}/${alternateSettingLabel(first)} class=${first.interfaceClass}" +
                         " subclass=${first.interfaceSubclass} proto=${first.interfaceProtocol} ok=$firstClaimed",
                 )
                 if (!firstClaimed) {
@@ -360,7 +357,7 @@ class NcmUsbBridge internal constructor(
                     val dataClaimed = connection.claimInterface(function.data, true)
                     Log.i(
                         IphoneCarPlayConfiguration.TAG,
-                        "claim iface=${function.data.id}/${function.data.alternateSetting}" +
+                        "claim iface=${function.data.id}/${alternateSettingLabel(function.data)}" +
                             " class=${function.data.interfaceClass} ok=$dataClaimed",
                     )
                     if (!dataClaimed) {
@@ -370,10 +367,16 @@ class NcmUsbBridge internal constructor(
                     }
                     claimed.add(function.data)
                 }
-                val altSelected = connection.setInterface(function.data)
+                val altSelected = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                    connection.setInterface(function.data)
+                } else {
+                    // KitKat has no UsbDeviceConnection.setInterface; the standard SET_INTERFACE
+                    // request selects the data alternate that carries the bulk endpoints.
+                    selectDataAlternateSetting(connection, function.data)
+                }
                 Log.i(
                     IphoneCarPlayConfiguration.TAG,
-                    "setInterface iface=${function.data.id}/${function.data.alternateSetting} ok=$altSelected",
+                    "setInterface iface=${function.data.id}/${alternateSettingLabel(function.data)} ok=$altSelected",
                 )
                 if (!altSelected) {
                     throw IphoneUsbException.DeviceUnavailable(
@@ -406,6 +409,24 @@ class NcmUsbBridge internal constructor(
                 throw IphoneUsbException.DeviceUnavailable("Android NCM open failed", error)
             }
         }
+
+        // UsbInterface.getAlternateSetting needs API 21; KitKat logs the flattened setting as 0.
+        private fun alternateSettingLabel(usbInterface: UsbInterface): Int =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) usbInterface.alternateSetting else 0
+
+        /** Standard USB SET_INTERFACE request; KitKat's claimInterface never switches settings. */
+        private fun selectDataAlternateSetting(
+            connection: UsbDeviceConnection,
+            data: UsbInterface,
+        ): Boolean = connection.controlTransfer(
+            UsbConstants.USB_DIR_OUT or UsbConstants.USB_TYPE_STANDARD or USB_RECIP_INTERFACE,
+            USB_REQUEST_SET_INTERFACE,
+            NcmFunctionDiscovery.DATA_ALTERNATE_SETTING,
+            data.id,
+            null,
+            0,
+            USB_CONTROL_TIMEOUT_MILLIS,
+        ) >= 0
 
         private fun readNcmHostMac(connection: UsbDeviceConnection, controlInterfaceId: Int): ByteArray? {
             val index = ethernetMacStringIndex(connection.rawDescriptors, controlInterfaceId) ?: return null
@@ -455,6 +476,10 @@ class NcmUsbBridge internal constructor(
 
         private const val USB_INTERFACE_DESCRIPTOR_TYPE = 0x04
         private const val USB_REQUEST_GET_DESCRIPTOR = 0x06
+        private const val USB_REQUEST_SET_INTERFACE = 0x11
+
+        /** bmRequestType recipient; UsbConstants exposes no USB_RECIP_* constants. */
+        private const val USB_RECIP_INTERFACE = 0x01
         private const val USB_STRING_DESCRIPTOR_TYPE = 0x03
         private const val CDC_FUNCTIONAL_DESCRIPTOR_TYPE = 0x24
         private const val CDC_ETHERNET_SUBTYPE = 0x0f

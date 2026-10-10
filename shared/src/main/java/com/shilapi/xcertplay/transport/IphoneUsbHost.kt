@@ -169,8 +169,9 @@ class IphoneUsbHost(
     /**
      * Opens LIVI's USBMUX bulk pipe on the re-enumerated iPhone.
      *
-     * This repeats CarPlay configuration selection on the newly opened Android connection and
-     * claims the Apple USB Multiplexor interface, preferring the LIVI bulk pair 0x04/0x85.
+     * This selects the CarPlay configuration where the platform supports it (API 21+), and on
+     * KitKat scans the flat descriptor interfaces for the already-active CarPlay configuration,
+     * then claims the Apple USB Multiplexor interface, preferring the LIVI bulk pair 0x04/0x85.
      * After a successful callback, it owns the returned session and must close it. If the callback
      * throws, this method closes the session before propagating the callback failure.
      */
@@ -232,10 +233,6 @@ class IphoneUsbHost(
     }
 
     private fun openIap2UsbSession(device: UsbDevice): Iap2UsbSession {
-        // Configuration selection, alternate settings and the USBMUX session need API 21.
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) {
-            throw IphoneUsbException.Protocol("iPhone CarPlay USB session needs Android 5.0 or newer")
-        }
         requireConfiguredDevice(device)
         if (!usbManager.hasPermission(device)) {
             throw IphoneUsbException.PermissionDenied("USB permission has not been granted")
@@ -244,32 +241,64 @@ class IphoneUsbHost(
             ?: throw IphoneUsbException.DeviceUnavailable("UsbManager could not open the iPhone")
         var claimedInterface: UsbInterface? = null
         try {
-            val configuration = IphoneCarPlayConfiguration.find(device)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                val configuration = IphoneCarPlayConfiguration.find(device)
+                    ?: throw IphoneUsbException.Protocol(
+                        "Re-enumerated iPhone exposes no USBMUX CarPlay configuration",
+                    )
+                if (!connection.setConfiguration(configuration)) {
+                    Log.w(
+                        IphoneCarPlayConfiguration.TAG,
+                        "setConfiguration ${configuration.id} reported failure; claiming anyway",
+                    )
+                }
+                val usbMux = IphoneCarPlayConfiguration.usbMuxInterface(configuration)
+                    ?: throw IphoneUsbException.Protocol("CarPlay configuration exposes no USBMUX interface")
+                val endpoints = IphoneCarPlayConfiguration.usbMuxEndpoints(usbMux)
+                    ?: throw IphoneUsbException.Protocol("USBMUX interface exposes no bulk endpoint pair")
+                Log.i(
+                    IphoneCarPlayConfiguration.TAG,
+                    "usbmux config=${configuration.id} iface=${usbMux.id} alt=${usbMux.alternateSetting} " +
+                        "class=${usbMux.interfaceClass}/${usbMux.interfaceSubclass}/${usbMux.interfaceProtocol} " +
+                        "endpoints=${usbMux.endpointCount} " +
+                        "out=${describeUsbEndpoint(endpoints.first)} " +
+                        "in=${describeUsbEndpoint(endpoints.second)}",
+                )
+                if (!connection.claimInterface(usbMux, true)) {
+                    throw IphoneUsbException.DeviceUnavailable("Android could not claim USBMUX interface 1")
+                }
+                claimedInterface = usbMux
+                return Iap2UsbSession(connection, endpoints.first, endpoints.second, onDiagnostic)
+            }
+            // KitKat cannot select configurations (setConfiguration needs API 21). The CarPlay
+            // vendor request re-enumerates the iPhone with the CarPlay configuration already
+            // active, so the flat interface scan is enough; KitKat's UsbDevice.getInterface(i)
+            // exposes every descriptor interface. Reaching this path without that configuration
+            // means the phone never switched and is genuinely unsupported.
+            val usbMux = IphoneCarPlayConfiguration.findUsbMuxInterface(device)
                 ?: throw IphoneUsbException.Protocol(
                     "Re-enumerated iPhone exposes no USBMUX CarPlay configuration",
                 )
-            if (!connection.setConfiguration(configuration)) {
-                Log.w(
-                    IphoneCarPlayConfiguration.TAG,
-                    "setConfiguration ${configuration.id} reported failure; claiming anyway",
-                )
-            }
-            val usbMux = IphoneCarPlayConfiguration.usbMuxInterface(configuration)
-                ?: throw IphoneUsbException.Protocol("CarPlay configuration exposes no USBMUX interface")
             val endpoints = IphoneCarPlayConfiguration.usbMuxEndpoints(usbMux)
                 ?: throw IphoneUsbException.Protocol("USBMUX interface exposes no bulk endpoint pair")
             Log.i(
                 IphoneCarPlayConfiguration.TAG,
-                "usbmux config=${configuration.id} iface=${usbMux.id} alt=${usbMux.alternateSetting} " +
+                "usbmux config=flat iface=${usbMux.id} " +
                     "class=${usbMux.interfaceClass}/${usbMux.interfaceSubclass}/${usbMux.interfaceProtocol} " +
                     "endpoints=${usbMux.endpointCount} " +
                     "out=${describeUsbEndpoint(endpoints.first)} " +
                     "in=${describeUsbEndpoint(endpoints.second)}",
             )
+            // Best-effort exclusivity against the stock iPod daemon; a failed claim (it may
+            // already hold the interface) still leaves the session able to transfer.
             if (!connection.claimInterface(usbMux, true)) {
-                throw IphoneUsbException.DeviceUnavailable("Android could not claim USBMUX interface 1")
+                Log.w(
+                    IphoneCarPlayConfiguration.TAG,
+                    "claimInterface ${usbMux.id} reported failure; using USBMUX anyway",
+                )
+            } else {
+                claimedInterface = usbMux
             }
-            claimedInterface = usbMux
             return Iap2UsbSession(connection, endpoints.first, endpoints.second, onDiagnostic)
         } catch (error: Throwable) {
             if (claimedInterface != null) connection.releaseInterface(claimedInterface)

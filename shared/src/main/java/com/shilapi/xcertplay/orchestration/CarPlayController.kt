@@ -1748,22 +1748,29 @@ class CarPlayController(
                 permissionPollGeneration++
                 when (phase) {
                     Phase.REENUMERATION, Phase.IPHONE -> {
-                        // Configuration enumeration needs API 21; KitKat finds no CarPlay configuration.
+                        // API 21+ enumerates configurations; KitKat scans the flattened
+                        // descriptor interfaces, which carry the CarPlay features once the
+                        // vendor-request re-enumeration has switched the phone over.
                         val configuration = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                             IphoneCarPlayConfiguration.find(result.device)
                         } else null
+                        val ready = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                            configuration != null
+                        } else {
+                            IphoneCarPlayConfiguration.findUsbMuxInterface(result.device) != null
+                        }
                         val configurationId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) configuration?.id else null
                         connectionDiagnostic(
-                            "USB configuration ready=${configuration != null} " +
+                            "USB configuration ready=$ready " +
                                 "configurationId=${configurationId ?: "none"} " +
                                 "reenumerationAttempts=$reenumerationAttempts " +
                                 "action=${when {
-                                    configuration != null -> "reuse-descriptors"
+                                    ready -> "reuse-descriptors"
                                     reenumerationAttempts < MAXIMUM_REENUMERATION_ATTEMPTS -> "request-transition"
                                     else -> "reject-missing-configuration"
                                 }}",
                         )
-                        if (configuration != null) {
+                        if (ready) {
                             openDataPaths(result.device)
                         } else if (reenumerationAttempts < MAXIMUM_REENUMERATION_ATTEMPTS) {
                             beginReenumeration(result.device)
@@ -1874,17 +1881,22 @@ class CarPlayController(
     }
 
     private fun openNcm(device: UsbDevice): NcmUsbBridge {
-        val configuration = (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) IphoneCarPlayConfiguration.find(device) else null)
-            ?: throw IphoneUsbException.Protocol(
-                "iPhone exposes no CarPlay configuration for NCM",
-            )
-        val function = NcmFunctionDiscovery.find(configuration)
-            ?: throw IphoneUsbException.Protocol("iPhone configuration does not expose an NCM function")
+        var configurationId = 0
+        val function = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            val configuration = IphoneCarPlayConfiguration.find(device)
+                ?: throw IphoneUsbException.Protocol(
+                    "iPhone exposes no CarPlay configuration for NCM",
+                )
+            configurationId = configuration.id
+            NcmFunctionDiscovery.find(configuration)
+        } else {
+            // KitKat: UsbDevice.getInterface(i) flattens every descriptor interface, including
+            // the data alternate that carries the NCM bulk endpoints.
+            NcmFunctionDiscovery.findFromDevice(device)
+        } ?: throw IphoneUsbException.Protocol("iPhone configuration does not expose an NCM function")
         // UsbInterface.getAlternateSetting needs API 21; KitKat logs the default setting as 0.
         val controlAlternate = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) function.control.alternateSetting else 0
         val dataAlternate = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) function.data.alternateSetting else 0
-        // UsbConfiguration#getId needs API 21; KitKat never reaches the NCM path.
-        val configurationId = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) configuration.id else 0
         debugLog(
             "ncm config=$configurationId control=${function.control.id}/$controlAlternate" +
                 " data=${function.data.id}/$dataAlternate" +
@@ -2676,7 +2688,7 @@ class CarPlayController(
         private const val DEVICE_AVAILABILITY_POLL_INTERVAL_MILLIS = 2_000L
         private const val WIRELESS_HANDOFF_TIMEOUT_MILLIS = 45_000L
         private const val RFCOMM_CONNECT_TIMEOUT_MILLIS = 15_000L
-        private const val MAXIMUM_REENUMERATION_ATTEMPTS = 2
+        private const val MAXIMUM_REENUMERATION_ATTEMPTS = 5
         private const val EXECUTOR_CLOSE_TIMEOUT_MILLIS = 2_000L
         private const val ADAPTER_ADDRESS_PLACEHOLDER = "02:00:00:00:00:00"
         private val BLUETOOTH_ADDRESS = Regex("^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
